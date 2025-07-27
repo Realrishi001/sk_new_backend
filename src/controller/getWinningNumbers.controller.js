@@ -1,6 +1,7 @@
 import { tickets } from "../models/ticket.model.js";
 import Admin from "../models/admins.model.js";
 import { winningPercentage } from "../models/winningPercentage.model.js";
+import { winningNumbers } from "../models/winningNumbers.model.js"; // Import winningNumbers model
 
 function shuffleArray(array) {
   for (let i = array.length - 1; i > 0; i--) {
@@ -10,7 +11,6 @@ function shuffleArray(array) {
   return array;
 }
 
-// Helpers to fill empty slots in each series
 function getRange(min, max) {
   const arr = [];
   for (let i = min; i <= max; i++) arr.push(i.toString());
@@ -26,24 +26,60 @@ function getRandomFromRange(rangeArr, count, excludeList = []) {
 }
 function getSeries(numStr) {
   if (numStr.length < 4) return null;
-  return numStr.slice(0, 2); // e.g., "50"
+  return numStr.slice(0, 2);
 }
 
 export const getTicketsByDrawTime = async (req, res) => {
   try {
     const { drawTime, adminId } = req.body;
+    console.log(drawTime);
     if (!drawTime || !adminId) {
       return res.status(400).json({ message: "drawTime and adminId are required" });
     }
 
+    const currentDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const queryTime = drawTime.trim().toLowerCase();
 
-    // Fetch all tickets
+    // --- CHECK IF RESULT ALREADY DECLARED ---
+    const existingResult = await winningNumbers.findOne({
+      where: {
+        DrawTime: drawTime,
+        drawDate: currentDate
+      }
+    });
+
+    if (existingResult) {
+      // Parse winning numbers JSON if stored as string
+      const storedNumbers =
+        typeof existingResult.winningNumbers === "string"
+          ? JSON.parse(existingResult.winningNumbers)
+          : existingResult.winningNumbers;
+
+      // Split stored numbers into series
+      const seriesSelected = { "10": [], "30": [], "50": [] };
+      storedNumbers.forEach(entry => {
+        const prefix = getSeries(entry.number);
+        if (seriesSelected[prefix]) seriesSelected[prefix].push(entry);
+      });
+
+      return res.status(200).json({
+        message: `Result already declared for draw time "${drawTime}" on ${currentDate}.`,
+        drawTime,
+        totalPoints: existingResult.totalPoints,
+        commission: null, // Not applicable from stored data
+        winningPercentage: null, // Not applicable from stored data
+        updatedTotalPoint: null, // Not applicable from stored data
+        selectedTickets: storedNumbers,
+        sumOfSelected: storedNumbers.reduce((sum, t) => sum + Number(t.value), 0),
+        numbersBySeries: seriesSelected
+      });
+    }
+
+    // --- NEW RESULT CALCULATION ---
     const allTickets = await tickets.findAll({
       attributes: ["ticketNumber", "totalPoints", "drawTime"]
     });
 
-    // Filter tickets by drawTime
     const filtered = allTickets.filter(ticket => {
       if (!ticket.drawTime) return false;
       let times;
@@ -58,17 +94,25 @@ export const getTicketsByDrawTime = async (req, res) => {
       return times.map(t => String(t).trim().toLowerCase()).includes(queryTime);
     });
 
-    // Fetch admin and their commission
     const admin = await Admin.findByPk(adminId, { attributes: ["commission"] });
     if (!admin) {
       return res.status(404).json({ message: "Admin not found." });
     }
 
-    // If no tickets for the drawTime, return random numbers in each series
     if (!filtered.length) {
       const fill10 = getRandomFromRange(getRange(1000, 1999), 10).map(n => ({ number: n, value: 0 }));
       const fill30 = getRandomFromRange(getRange(3000, 3999), 10).map(n => ({ number: n, value: 0 }));
       const fill50 = getRandomFromRange(getRange(5000, 5999), 10).map(n => ({ number: n, value: 0 }));
+
+      // Save empty winning numbers
+      await winningNumbers.create({
+        loginId: adminId,
+        winningNumbers: [...fill10, ...fill30, ...fill50],
+        totalPoints: 0,
+        DrawTime: drawTime,
+        drawDate: currentDate
+      });
+
       return res.status(200).json({
         drawTime,
         totalPoints: 0,
@@ -85,8 +129,7 @@ export const getTicketsByDrawTime = async (req, res) => {
       });
     }
 
-    // Deduplicate and sum values by ticket number
-    const ticketMap = {}; // { '5070': value }
+    const ticketMap = {};
     filtered.forEach(ticket => {
       let ticketStr = ticket.ticketNumber;
       if (typeof ticketStr === "string" && ticketStr.startsWith('"') && ticketStr.endsWith('"')) {
@@ -96,19 +139,17 @@ export const getTicketsByDrawTime = async (req, res) => {
       parts.forEach(part => {
         const [num, val] = part.split(":").map(s => s.trim());
         if (num && val && !isNaN(val)) {
-          const numericNum = num.replace(/-/g, ""); // Remove dash, e.g. "50-70" -> "5070"
+          const numericNum = num.replace(/-/g, "");
           ticketMap[numericNum] = (ticketMap[numericNum] || 0) + Number(val);
         }
       });
     });
 
-    // Convert deduplicated map to array
     const allTicketEntries = Object.entries(ticketMap).map(([number, value]) => ({
       number,
       value,
     }));
 
-    // --- GROUP BY SERIES ---
     const seriesMap = { "10": [], "30": [], "50": [] };
     allTicketEntries.forEach(entry => {
       const prefix = getSeries(entry.number);
@@ -117,10 +158,8 @@ export const getTicketsByDrawTime = async (req, res) => {
       }
     });
 
-    // Shuffle each series
     Object.keys(seriesMap).forEach(series => shuffleArray(seriesMap[series]));
 
-    // Commission calculation
     const totalPoints = filtered.reduce(
       (sum, ticket) => sum + Number(ticket.totalPoints),
       0
@@ -128,20 +167,16 @@ export const getTicketsByDrawTime = async (req, res) => {
     const commissionPercent = Number(admin.commission) || 0;
     const afterCommission = totalPoints - (totalPoints * commissionPercent / 100);
 
-    // Fetch the latest winning percentage
     const latestWinning = await winningPercentage.findOne({
       order: [['createdAt', 'DESC']]
     });
     const winningPercent = latestWinning ? Number(latestWinning.percentage) : 0;
     const updatedTotalPoint = Math.round(afterCommission * (winningPercent / 100));
 
-    // --- SELECT 10 NUMBERS FROM EACH SERIES, WITHOUT EXCEEDING THE TOTAL ---
     let runningSum = 0;
-    let selectedTickets = [];
     const perSeriesLimit = 10;
     let seriesSelected = { "10": [], "30": [], "50": [] };
 
-    // 1st pass: Pick real ticket numbers (sum does not exceed updatedTotalPoint)
     for (const series of ["10", "30", "50"]) {
       for (const entry of seriesMap[series]) {
         if (seriesSelected[series].length >= perSeriesLimit) break;
@@ -151,28 +186,28 @@ export const getTicketsByDrawTime = async (req, res) => {
       }
     }
 
-    // 2nd pass: If less than 10 in a series, fill with randoms from that range (value: 0)
-    if (seriesSelected["10"].length < 10) {
-      const already = seriesSelected["10"].map(e => e.number);
-      const fill10 = getRandomFromRange(getRange(1000, 1999), 10 - already.length, already)
-        .map(n => ({ number: n, value: 0 }));
-      seriesSelected["10"] = [...seriesSelected["10"], ...fill10];
-    }
-    if (seriesSelected["30"].length < 10) {
-      const already = seriesSelected["30"].map(e => e.number);
-      const fill30 = getRandomFromRange(getRange(3000, 3999), 10 - already.length, already)
-        .map(n => ({ number: n, value: 0 }));
-      seriesSelected["30"] = [...seriesSelected["30"], ...fill30];
-    }
-    if (seriesSelected["50"].length < 10) {
-      const already = seriesSelected["50"].map(e => e.number);
-      const fill50 = getRandomFromRange(getRange(5000, 5999), 10 - already.length, already)
-        .map(n => ({ number: n, value: 0 }));
-      seriesSelected["50"] = [...seriesSelected["50"], ...fill50];
-    }
+    const fillSeries = (prefix, range) => {
+      if (seriesSelected[prefix].length < 10) {
+        const already = seriesSelected[prefix].map(e => e.number);
+        const fill = getRandomFromRange(getRange(...range), 10 - already.length, already)
+          .map(n => ({ number: n, value: 0 }));
+        seriesSelected[prefix] = [...seriesSelected[prefix], ...fill];
+      }
+    };
+    fillSeries("10", [1000, 1999]);
+    fillSeries("30", [3000, 3999]);
+    fillSeries("50", [5000, 5999]);
 
-    // Final result: Each series has exactly 10, randoms (value 0) if needed
-    selectedTickets = [...seriesSelected["10"], ...seriesSelected["30"], ...seriesSelected["50"]];
+    const selectedTickets = [...seriesSelected["10"], ...seriesSelected["30"], ...seriesSelected["50"]];
+
+    // --- SAVE WINNING NUMBERS ---
+    await winningNumbers.create({
+      loginId: adminId,
+      winningNumbers: selectedTickets,
+      totalPoints,
+      DrawTime: drawTime,
+      drawDate: currentDate
+    });
 
     return res.status(200).json({
       drawTime,
