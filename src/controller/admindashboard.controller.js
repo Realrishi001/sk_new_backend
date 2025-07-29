@@ -60,6 +60,7 @@ export const getTodayTotalPoints = async (req, res) => {
         commissionAmount: 0,
         netAmount: Number(totalPointsToday.toFixed(2)),
         winningAmount: 0,
+        adminAmount: Number(totalPointsToday.toFixed(2)), // Admin keeps all if no commissions/winnings
       });
     }
 
@@ -80,6 +81,9 @@ export const getTodayTotalPoints = async (req, res) => {
     const winningPercent = latestWinning ? parseFloat(latestWinning.percentage) : 0;
     const winningAmount = (netAmount * winningPercent) / 100;
 
+    // Calculate admin amount (remaining after winnings)
+    const adminAmount = netAmount - winningAmount;
+
     res.status(200).json({
       success: true,
       totalPointsToday: Number(totalPointsToday.toFixed(2)),
@@ -88,6 +92,7 @@ export const getTodayTotalPoints = async (req, res) => {
       netAmount: Number(netAmount.toFixed(2)),
       winningPercent: Number(winningPercent.toFixed(2)),
       winningAmount: Number(winningAmount.toFixed(2)),
+      adminAmount: Number(adminAmount.toFixed(2)),
     });
   } catch (error) {
     console.error(error);
