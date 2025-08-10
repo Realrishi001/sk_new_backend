@@ -1,35 +1,84 @@
-import { tickets } from "../models/ticket.model.js";
+// controllers/tickets.controller.js
+import { Op } from "sequelize";
+import { sequelizeCon } from "../init/dbConnection.js";
 import Admin from "../models/admins.model.js";
+import { tickets } from "../models/ticket.model.js";
 
-const savePrintedTickets = async (req, res) => {
-    try {
-        const { gameTime, ticketNumber, totalQuatity, totalPoints, loginId, drawTime } = req.body;
+export const savePrintedTickets = async (req, res) => {
+  const t = await sequelizeCon.transaction();
+  try {
+    let { gameTime, ticketNumber, totalQuatity, totalPoints, loginId, drawTime } = req.body;
 
-        if (!Array.isArray(drawTime) || drawTime.length === 0) {
-            return res.status(400).json({ message: "drawTime must be a non-empty array." });
-            }
-
-        const newTicket = await tickets.create({
-            gameTime,
-            loginId,
-            ticketNumber,
-            totalQuatity,
-            totalPoints,
-            drawTime, // add drawTime here
-        });
-
-        return res.status(201).json({
-            message: "Ticket saved successfully",
-            ticket: newTicket
-        });
-
-    } catch (error) {
-        console.error("Error saving ticket:", error);
-        return res.status(500).json({
-            message: "Internal Server Error"
-        });
+    // Basic validations
+    if (!Array.isArray(drawTime) || drawTime.length === 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "drawTime must be a non-empty array." });
     }
+
+    const points = Number(totalPoints);
+    if (!Number.isFinite(points) || points < 0) {
+      await t.rollback();
+      return res.status(400).json({ message: "totalPoints must be a non-negative number." });
+    }
+
+    if (!loginId) {
+      await t.rollback();
+      return res.status(400).json({ message: "loginId is required." });
+    }
+
+    // Lock the admin row FOR UPDATE to avoid race conditions
+    const admin = await Admin.findOne({
+      where: { id: loginId },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!admin) {
+      await t.rollback();
+      return res.status(404).json({ message: "Admin not found." });
+    }
+
+    const currentBalance = Number(admin.balance || 0);
+
+    if (currentBalance < points) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Insufficient balance.",
+        currentBalance,
+        required: points,
+      });
+    }
+
+    // Deduct balance
+    admin.balance = currentBalance - points;
+    await admin.save({ transaction: t });
+
+    // Create the ticket
+    const newTicket = await tickets.create(
+      {
+        gameTime,
+        loginId,
+        ticketNumber,
+        totalQuatity,
+        totalPoints: points,
+        drawTime, // array is fine if your model column supports JSON/ARRAY/TEXT(JSON)
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+    return res.status(201).json({
+      message: "Ticket saved and balance deducted successfully.",
+      ticket: newTicket,
+      newBalance: admin.balance,
+    });
+  } catch (error) {
+    console.error("Error saving ticket:", error);
+    try { await t.rollback(); } catch {}
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
+
 const getPrintedTickets = async (req, res) => {
   try {
     const allTickets = await tickets.findAll({
@@ -118,4 +167,4 @@ export const subtractAdminBalance = async (req, res) => {
 
 
 
-export { savePrintedTickets, getPrintedTickets };
+export { getPrintedTickets };
