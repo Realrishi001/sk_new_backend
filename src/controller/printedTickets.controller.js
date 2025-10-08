@@ -82,7 +82,7 @@ export const savePrintedTickets = async (req, res) => {
       message: "Ticket saved and balance deducted successfully.",
       ticket: newTicket,
       ticketId: newTicket.id, 
-      newBalance: admin.balance,
+      newBalance: admin.balance,  
     });
   } catch (error) {
     console.error("Error saving ticket:", error);

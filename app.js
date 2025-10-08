@@ -17,9 +17,9 @@ import claimTicketRouter from './src/routes/claimedTickets.router.js'
 import cancelTicketRouter from './src/routes/cancelTicket.router.js'
 import superadminRouter from './src/routes/superadmin.router.js'
 import winningNumberRouter from './src/routes/winningNumbers.router.js'
+import threedRouter from './src/routes/threed.rotuer.js'
 
-dotenv.config;
-
+dotenv.config();
 
 sequelizeCon.sync({force : false})
 .then(()=>{
@@ -67,7 +67,7 @@ app.use("/api", claimTicketRouter);
 app.use("/api", cancelTicketRouter);
 app.use("/api", superadminRouter);
 app.use("/api", winningNumberRouter);
-
+app.use("/api", threedRouter);
 // Start the server
 app.listen(port, ()=> {
     console.log(`Server is running on port ${port}`);

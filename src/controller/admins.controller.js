@@ -273,7 +273,7 @@ export const deleteAdmin = async (req, res) => {
 export const getAdminUsernamesAndCommissions = async (req, res) => {
   try {
     const admins = await Admin.findAll({
-      attributes: ["userName", "commission"], // Only these two fields
+      attributes: ["userName", "commission"], 
     });
 
     res.status(200).json({ admins });
@@ -304,7 +304,7 @@ export const deleteAdminByUserName = async (req, res) => {
 };
 
 
-export const mainAdminLogin = async (req, res) => {
+export const mainAdminLogin = async(req, res) => {
   try {
     const { adminId, password } = req.body;
 
