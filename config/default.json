@@ -1,7 +1,7 @@
 {
   "port": 10000,
   "database": {
-    "host": "dpg-d3julhu3jp1c73ake3c0-a",
+    "host": "dpg-d3julhu3jp1c73ake3c0-a.oregon-postgres.render.com",
     "username": "monis_user",
     "password": "8EtwreJiuLRp8k8okxbzMvHuHIa8d6GH",
     "database": "skilljackpot",
@@ -11,4 +11,3 @@
   },
   "jwtSecret": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
 }
-
