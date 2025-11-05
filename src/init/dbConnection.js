@@ -1,29 +1,20 @@
-import { Sequelize, Model, DataTypes, Op, QueryTypes } from 'sequelize';
-import config from 'config';
+import {Sequelize, Model, DataTypes, Op, QueryTypes} from 'sequelize'
+import config from 'config'
 
-const dbConfig = config.get('database');
+const mysqlConfig = config.get('mysql')
 
-// ✅ PostgreSQL connection (Render requires SSL)
 export const sequelizeCon = new Sequelize(
-  dbConfig.database,   // database name
-  dbConfig.username,   // user
-  dbConfig.password,   // password
-  {
-    host: dbConfig.host,
-    dialect: dbConfig.dialect,
-    port: dbConfig.port || 5432, // PostgreSQL default port
-    logging: dbConfig.logging,
-    dialectOptions: {
-      ssl: {
-        require: true,               // ✅ SSL required
-        rejectUnauthorized: false    // ✅ Skip cert verification
-      }
+    mysqlConfig.database,
+    mysqlConfig.username,
+    mysqlConfig.password,{
+        host: mysqlConfig.host,
+        dialect : mysqlConfig.dialect,
+        logging : mysqlConfig.logging
     }
-  }
 );
 
-sequelizeCon.authenticate()
-  .then(() => console.log("✅ Database connection established successfully"))
-  .catch(err => console.error("❌ Unable to connect to the database:", err.message));
 
-export { Model, DataTypes, Op, QueryTypes };
+sequelizeCon.authenticate().then(()=> console.log("Database connection Established"))
+.catch((err) =>console.error("Unable to connect to the database", err.message));
+
+export {Model, DataTypes, Op, QueryTypes};
