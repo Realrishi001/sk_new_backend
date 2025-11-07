@@ -4,7 +4,7 @@ import cors from 'cors'
 import { sequelizeCon } from './src/init/dbConnection.js'; 
 
 // file imports
-import printdTicekts from './src/routes/printedTickets.rotuer.js'
+import printdTicekts from './src/routes/printedTickets.router.js'
 import admins from './src/routes/admins.router.js'
 import winningPercentage from './src/routes/winningPercentage.routes.js'
 import winnings from './src/routes/getWinningNumbers.router.js'
