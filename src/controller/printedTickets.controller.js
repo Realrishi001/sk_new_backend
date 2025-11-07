@@ -16,7 +16,10 @@ export const savePrintedTickets = async (req, res) => {
       drawTime,
     } = req.body;
 
-    // Basic validations
+    // ✅ Log incoming data for debugging
+    console.log("🧾 Incoming Ticket Data:", req.body);
+
+    // --- Validation ---
     if (!Array.isArray(drawTime) || drawTime.length === 0) {
       await t.rollback();
       return res
@@ -24,8 +27,8 @@ export const savePrintedTickets = async (req, res) => {
         .json({ message: "drawTime must be a non-empty array." });
     }
 
-    const points = Number(totalPoints);
-    if (!Number.isFinite(points) || points < 0) {
+    const basePoints = Number(totalPoints);
+    if (!Number.isFinite(basePoints) || basePoints < 0) {
       await t.rollback();
       return res
         .status(400)
@@ -37,7 +40,7 @@ export const savePrintedTickets = async (req, res) => {
       return res.status(400).json({ message: "loginId is required." });
     }
 
-    // Lock the admin row FOR UPDATE to avoid race conditions
+    // --- Lock admin record for safe balance update ---
     const admin = await Admin.findOne({
       where: { id: loginId },
       transaction: t,
@@ -50,48 +53,77 @@ export const savePrintedTickets = async (req, res) => {
     }
 
     const currentBalance = Number(admin.balance || 0);
+    const commissionPercent = Number(admin.commission || 0);
 
-    if (currentBalance < points) {
+    // ✅ Log previous balance for reference
+    console.log("💳 Previous Balance:", currentBalance.toFixed(2));
+
+    // 🧮 Commission calculation
+    const commissionAmount = (basePoints * commissionPercent) / 100;
+    const finalDeductPoints = basePoints - commissionAmount;
+
+    console.log("💰 Base Points:", basePoints);
+    console.log("🏪 Commission (%):", commissionPercent);
+    console.log("💵 Commission Earned:", commissionAmount.toFixed(2));
+    console.log("📉 Net Deduction from Balance:", finalDeductPoints.toFixed(2));
+
+    // --- Check sufficient balance ---
+    if (currentBalance < finalDeductPoints) {
       await t.rollback();
       return res.status(400).json({
         message: "Insufficient balance.",
         currentBalance,
-        required: points,
+        required: finalDeductPoints,
       });
     }
 
-    // Deduct balance
-    admin.balance = currentBalance - points;
+    // --- Deduct balance after applying commission ---
+    admin.balance = currentBalance - finalDeductPoints;
     await admin.save({ transaction: t });
 
-    // Create the ticket
+    console.log("✅ Balance after deduction:", admin.balance.toFixed(2));
+
+    // --- Create Ticket Record ---
     const newTicket = await tickets.create(
       {
         gameTime,
         loginId,
         ticketNumber,
         totalQuatity,
-        totalPoints: points,
-        drawTime, // Ensure the model column supports this type (e.g., JSON/ARRAY/TEXT)
+        totalPoints: basePoints,
+        drawTime,
+        commissionApplied: commissionPercent,
+        commissionEarned: commissionAmount,
+        deductedPoints: finalDeductPoints,
       },
       { transaction: t }
     );
 
+    // --- Commit transaction ---
     await t.commit();
+
+    console.log("🎟️ Ticket saved successfully:", newTicket.id);
+
     return res.status(201).json({
-      message: "Ticket saved and balance deducted successfully.",
+      message: "Ticket saved and commission applied successfully.",
       ticket: newTicket,
-      ticketId: newTicket.id, 
-      newBalance: admin.balance,  
+      commissionApplied: commissionPercent,
+      commissionEarned: Number(commissionAmount.toFixed(2)),
+      deductedPoints: Number(finalDeductPoints.toFixed(2)),
+      previousBalance: Number(currentBalance.toFixed(2)), // ✅ included in response too
+      newBalance: Number(admin.balance.toFixed(2)),
     });
   } catch (error) {
-    console.error("Error saving ticket:", error);
+    console.error("🔥 Error saving ticket:", error);
     try {
       await t.rollback();
-    } catch {}
+    } catch {
+      console.error("⚠️ Transaction rollback failed.");
+    }
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
+
 
 
 const getPrintedTickets = async (req, res) => {
