@@ -144,9 +144,7 @@ export const getNavbarDetails = async (req, res) => {
   }
 };
 
-/* ------------------------------------------------------------------
-   🏆 Controller: Get All Winning Numbers by Login ID
------------------------------------------------------------------- */
+
 export const getWinningNumbersByLoginId = async (req, res) => {
   try {
     const { loginId } = req.body;
@@ -154,8 +152,16 @@ export const getWinningNumbersByLoginId = async (req, res) => {
       return res.status(400).json({ message: "loginId is required" });
     }
 
+    // Get today's date string (YYYY-MM-DD)
+    const today = new Date();
+    const todayDate = today.toISOString().split("T")[0];
+
+    // Fetch only today's winning numbers
     const records = await winningNumbers.findAll({
-      where: { loginId },
+      where: {
+        loginId,
+        drawDate: todayDate, // ✅ Only today's date
+      },
       attributes: ["winningNumbers", "DrawTime", "drawDate"],
       order: [
         ["drawDate", "DESC"],
@@ -163,14 +169,15 @@ export const getWinningNumbersByLoginId = async (req, res) => {
       ],
     });
 
-    return res
-      .status(200)
-      .json({ count: records.length, results: records });
+    return res.status(200).json({
+      count: records.length,
+      results: records,
+    });
   } catch (err) {
-    console.error("Error fetching winning numbers:", err);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: err.message });
+    console.error("Error fetching today's winning numbers:", err);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
   }
 };
-
