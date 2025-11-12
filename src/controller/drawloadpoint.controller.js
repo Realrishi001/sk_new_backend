@@ -207,3 +207,155 @@ export const getTicketsBySeries = async (req, res) => {
     });
   }
 };
+
+
+export const getTicketsBySeriesWithShop = async (req, res) => {
+  try {
+    const { drawTime } = req.query; // optional query param (e.g. "06:30 PM")
+
+    // 🗓️ Use current date (today)
+    const today = new Date();
+    const D = String(today.getDate()).padStart(2, "0");
+    const M = String(today.getMonth() + 1).padStart(2, "0");
+    const Y = today.getFullYear();
+    const ddmmyyyy = `${D}-${M}-${Y}`;
+
+    // 🎫 Fetch all tickets of today
+    const rows = await tickets.findAll({
+      where: { gameTime: { [Op.like]: `${ddmmyyyy}%` } },
+      attributes: ["ticketNumber", "loginId", "drawTime", "gameTime"],
+      order: [["createdAt", "DESC"]],
+    });
+
+    // 🧩 Parse ticketNumber safely
+    const parseTicketNumber = (raw) => {
+      if (!raw) return {};
+      if (typeof raw === "object" && !Array.isArray(raw)) return raw;
+      if (typeof raw === "string") {
+        try {
+          const obj = JSON.parse(raw);
+          if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj;
+        } catch {}
+        return raw.split(",").reduce((acc, entry) => {
+          const [k, v] = entry.split(":").map((s) => s.trim());
+          if (k && v) acc[k] = Number(v);
+          return acc;
+        }, {});
+      }
+      return {};
+    };
+
+    // 🧩 Ensure drawTime is always an array
+    const toTimeArray = (val) => {
+      if (Array.isArray(val)) return val.map(String);
+      if (typeof val === "string") {
+        try {
+          const parsed = JSON.parse(val);
+          return Array.isArray(parsed) ? parsed.map(String) : [val];
+        } catch {
+          return [val];
+        }
+      }
+      return [];
+    };
+
+    // 🧮 Group by Admin → DrawTime → Series
+    const adminGroups = {};
+
+    for (const t of rows) {
+      const adminId = t.loginId;
+      const drawTimes = toTimeArray(t.drawTime);
+
+      // 🕕 Filter by specific draw time if provided
+      if (drawTime && !drawTimes.includes(drawTime)) continue;
+
+      if (!adminGroups[adminId]) {
+        adminGroups[adminId] = {
+          shopId: adminId,
+          date: String(t.gameTime).split(" ")[0],
+          draws: {},
+        };
+      }
+
+      const parsedTickets = parseTicketNumber(t.ticketNumber);
+
+      drawTimes.forEach((timeSlot) => {
+        if (drawTime && timeSlot !== drawTime) return; // strict match
+
+        if (!adminGroups[adminId].draws[timeSlot]) {
+          adminGroups[adminId].draws[timeSlot] = {
+            drawTime: timeSlot,
+            series10: {},
+            series30: {},
+            series50: {},
+          };
+        }
+
+        // 🔢 Sort ticket numbers into correct series buckets
+        for (const [ticketNum, qtyRaw] of Object.entries(parsedTickets)) {
+          const qty = Number(qtyRaw) || 0;
+          const base = parseInt(String(ticketNum).split("-")[0], 10);
+          const cleanNum = String(ticketNum).replace("-", "");
+          const draw = adminGroups[adminId].draws[timeSlot];
+
+          if (base >= 10 && base <= 19)
+            draw.series10[cleanNum] = (draw.series10[cleanNum] || 0) + qty;
+          else if (base >= 30 && base <= 39)
+            draw.series30[cleanNum] = (draw.series30[cleanNum] || 0) + qty;
+          else if (base >= 50 && base <= 59)
+            draw.series50[cleanNum] = (draw.series50[cleanNum] || 0) + qty;
+        }
+      });
+    }
+
+    // 🏪 Fetch shop names for all adminIds
+    const adminIds = Object.keys(adminGroups);
+    const adminRecords = await Admin.findAll({
+      where: { id: { [Op.in]: adminIds } },
+      attributes: ["id", "shopName"],
+    });
+
+    const adminMap = {};
+    for (const a of adminRecords) {
+      adminMap[a.id] = a.shopName || "Unknown Shop";
+    }
+
+    // 🧾 Build final structured result
+    const result = Object.values(adminGroups).map((admin) => ({
+      shopId: admin.shopId,
+      shopName: adminMap[admin.shopId] || "Unknown Shop",
+      date: admin.date,
+      draws: Object.values(admin.draws).map((draw) => ({
+        drawTime: draw.drawTime,
+        series10: Object.entries(draw.series10).map(([num, qty]) => ({
+          ticketNumber: num,
+          quantity: qty,
+        })),
+        series30: Object.entries(draw.series30).map(([num, qty]) => ({
+          ticketNumber: num,
+          quantity: qty,
+        })),
+        series50: Object.entries(draw.series50).map(([num, qty]) => ({
+          ticketNumber: num,
+          quantity: qty,
+        })),
+      })),
+    }));
+
+    // ✅ Final Response
+    return res.status(200).json({
+      success: true,
+      dateUsed: ddmmyyyy,
+      drawTime: drawTime || "All",
+      count: result.length,
+      tickets: result,
+    });
+  } catch (error) {
+    console.error("❌ Error in getTicketsBySeriesWithShop:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch tickets",
+      error: error.message,
+    });
+  }
+};
