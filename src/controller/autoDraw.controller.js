@@ -5,7 +5,6 @@ import { winningPercentage } from "../models/winningPercentage.model.js";
 
 const POINTS_PER_QUANTITY = 180;
 
-/* ------------------ FORMAT DRAW TIME ------------------ */
 const formatDrawTime = (time) => {
   if (!time) return "";
   let clean = String(time).trim().toUpperCase();
@@ -21,8 +20,7 @@ const formatDrawTime = (time) => {
   return `${h}:${m} ${p}`;
 };
 
-/* ------------------ PARSE TICKET NUMBER ------------------ */
-// Accepts your format: "10-01:4,30-02:8"
+// Parse ticket numbers into a map { ticketNumber: quantity }
 const parseTicketNumberToMap = (ticketStr) => {
   const map = {};
 
@@ -47,10 +45,9 @@ const parseTicketNumberToMap = (ticketStr) => {
   return map;
 };
 
-/* ------------------ RANDOM SERIES FILLER ------------------ */
-const randomSeriesFill = (prefix) => {
-  const used = new Set();
-  const result = [];
+// Helper random generator for non-ticket numbers
+const randomFillExcluding = (prefix, used, existingArr) => {
+  const result = [...existingArr];
 
   while (result.length < 10) {
     const randomTwo = Math.floor(Math.random() * 100)
@@ -72,9 +69,95 @@ const randomSeriesFill = (prefix) => {
   return result;
 };
 
-/* ===========================================================
-       AUTO DRAW — GLOBAL RESULT (NO ADMIN REQUIRED)
-   =========================================================== */
+// Randomly choose the case logic (1, 2, 3, or 4)
+const randomCase = () => {
+  return Math.floor(Math.random() * 4) + 1; // Randomly returns 1, 2, 3, or 4
+};
+
+// Logic for different cases
+const handleWinningCases = (filteredTickets, qtyCapacity, totals, usedWinners) => {
+  const caseNum = randomCase();
+  let winners = [];
+
+  switch (caseNum) {
+    case 1:
+      // **Case 1:** Ticket with highest quantity
+      const sortedMax = Object.entries(totals)
+        .map(([num, qty]) => ({ number: num, qty }))
+        .sort((a, b) => b.qty - a.qty);
+
+      for (let item of sortedMax) {
+        if (item.qty <= qtyCapacity) {
+          winners.push({
+            number: item.number,
+            quantity: item.qty,
+            value: item.qty * POINTS_PER_QUANTITY,
+          });
+          qtyCapacity -= item.qty;
+        }
+        if (qtyCapacity <= 0) break;
+      }
+      break;
+
+    case 2:
+      // **Case 2:** Tickets with the minimum quantity
+      const sortedMin = Object.entries(totals)
+        .map(([num, qty]) => ({ number: num, qty }))
+        .sort((a, b) => a.qty - b.qty);
+
+      for (let item of sortedMin) {
+        if (item.qty <= qtyCapacity) {
+          winners.push({
+            number: item.number,
+            quantity: item.qty,
+            value: item.qty * POINTS_PER_QUANTITY,
+          });
+          qtyCapacity -= item.qty;
+        }
+        if (qtyCapacity <= 0) break;
+      }
+      break;
+
+    case 3:
+      // **Case 3:** No tickets taken → Random fill, excluding taken ticket numbers
+      if (!filteredTickets.length) {
+        console.log("⚠ No tickets found → Generating RANDOM full series excluding taken numbers");
+
+        // Collect all the numbers already taken in tickets for this draw
+        const takenNumbers = new Set();
+        filteredTickets.forEach((ticket) => {
+          const parsed = parseTicketNumberToMap(ticket.ticketNumber);
+          Object.keys(parsed).forEach((num) => takenNumbers.add(num));
+        });
+
+        // Generate random numbers, excluding taken numbers
+        winners = randomFillExcluding("10", takenNumbers, []);
+        winners = winners.concat(randomFillExcluding("30", takenNumbers, []));
+        winners = winners.concat(randomFillExcluding("50", takenNumbers, []));
+      }
+      break;
+
+    case 4:
+      // **Case 4:** One large quantity of ticket numbers
+      const sortedByQty = Object.entries(totals)
+        .map(([num, qty]) => ({ number: num, qty }))
+        .sort((a, b) => b.qty - a.qty);
+
+      if (sortedByQty.length > 0) {
+        const largest = sortedByQty[0]; // pick the highest quantity ticket
+        winners.push({
+          number: largest.number,
+          quantity: largest.qty,
+          value: largest.qty * POINTS_PER_QUANTITY,
+        });
+      }
+      break;
+  }
+
+  return winners;
+};
+
+// Main function to generate winning numbers based on cases
 export const autoGenerateWinningNumbers = async (drawTime) => {
   try {
     const normalized = formatDrawTime(drawTime);
@@ -82,7 +165,7 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
 
     console.log(`⏳ Auto Draw Triggered → ${normalized}`);
 
-    /* ------------------ CHECK IF ALREADY EXISTS ------------------ */
+    // Check if result already exists for this draw time
     const exists = await winningNumbers.findOne({
       where: { DrawTime: normalized, drawDate },
     });
@@ -92,38 +175,37 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
       return false;
     }
 
-    /* ------------------ FETCH ALL TODAY'S TICKETS ------------------ */
+    // Fetch all tickets for today
     const start = new Date();
     start.setHours(0, 0, 0, 0);
 
     const end = new Date();
     end.setHours(23, 59, 59, 999);
 
-    const all = await tickets.findAll({
+    const allTickets = await tickets.findAll({
       where: { createdAt: { [Op.between]: [start, end] } },
       attributes: ["ticketNumber", "totalPoints", "drawTime"],
     });
 
-    /* ------------------ FILTER MATCHING DRAW TIME ------------------ */
-    const filtered = all.filter((t) => {
+    // Filter tickets by draw time
+    const filteredTickets = allTickets.filter((ticket) => {
       try {
-        const times = Array.isArray(t.drawTime)
-          ? t.drawTime
-          : JSON.parse(t.drawTime);
-
+        const times = Array.isArray(ticket.drawTime)
+          ? ticket.drawTime
+          : JSON.parse(ticket.drawTime);
         return times.map((x) => formatDrawTime(x)).includes(normalized);
       } catch {
         return false;
       }
     });
 
-    /* ------------------ IF NO TICKETS — RANDOM SERIES ------------------ */
-    if (!filtered.length) {
-      console.log("⚠ No tickets found → Saving RANDOM SERIES");
+    // If no tickets found, generate random winning numbers
+    if (!filteredTickets.length) {
+      console.log("⚠ No tickets found → Saving RANDOM full series");
 
-      const series10 = randomSeriesFill("10");
-      const series30 = randomSeriesFill("30");
-      const series50 = randomSeriesFill("50");
+      const series10 = randomFillExcluding("10", new Set(), []);
+      const series30 = randomFillExcluding("30", new Set(), []);
+      const series50 = randomFillExcluding("50", new Set(), []);
 
       await winningNumbers.create({
         loginId: 0,
@@ -133,88 +215,38 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
         drawDate,
       });
 
-      console.log(`✅ Empty result saved for ${normalized}`);
       return true;
     }
 
-    /* ------------------ CALCULATE TOTAL POINTS ------------------ */
-    const totalPoints = filtered.reduce(
-      (sum, t) => sum + Number(t.totalPoints || 0),
+    // Calculate total points from the filtered tickets
+    const totalPoints = filteredTickets.reduce(
+      (sum, ticket) => sum + Number(ticket.totalPoints || 0),
       0
     );
 
-    /* ------------------ WINNING PERCENTAGE LOGIC ------------------ */
+    // Winning percentage logic
     const latest = await winningPercentage.findOne({
       order: [["createdAt", "DESC"]],
     });
 
     const winningPercent = latest ? Number(latest.percentage || 0) : 0;
-
     const winningPool = Math.floor((totalPoints * winningPercent) / 100);
     let qtyCapacity = Math.floor(winningPool / POINTS_PER_QUANTITY);
 
-    /* ------------------ BUILD NUMBER TOTALS ------------------ */
+    // Build the ticket numbers map
     const totals = {};
 
-    for (let t of filtered) {
-      const parsed = parseTicketNumberToMap(t.ticketNumber);
-
+    for (let ticket of filteredTickets) {
+      const parsed = parseTicketNumberToMap(ticket.ticketNumber);
       for (let [num, qty] of Object.entries(parsed)) {
         totals[num] = (totals[num] || 0) + qty;
       }
     }
 
-    /* ------------------ PRIORITY SELECTION (DESC QTY) ------------------ */
-    const sorted = Object.entries(totals)
-      .map(([num, qty]) => ({ number: num, qty }))
-      .sort((a, b) => b.qty - a.qty);
+    // Handle winning cases logic
+    const winners = handleWinningCases(filteredTickets, qtyCapacity, totals);
 
-    const winners = [];
-
-    for (let item of sorted) {
-      if (item.qty <= qtyCapacity) {
-        winners.push({
-          number: item.number,
-          quantity: item.qty,
-          value: item.qty * POINTS_PER_QUANTITY,
-        });
-        qtyCapacity -= item.qty;
-      }
-      if (qtyCapacity <= 0) break;
-    }
-
-    /* ------------------ FALLBACK: LEAST QTY FIRST ------------------ */
-    if (qtyCapacity > 0) {
-      const fallback = sorted
-        .slice()
-        .sort((a, b) => a.qty - b.qty);
-
-      for (let item of fallback) {
-        if (!winners.some((w) => w.number === item.number)) {
-          if (item.qty <= qtyCapacity) {
-            winners.push({
-              number: item.number,
-              quantity: item.qty,
-              value: item.qty * POINTS_PER_QUANTITY,
-            });
-            qtyCapacity -= item.qty;
-          }
-        }
-        if (qtyCapacity <= 0) break;
-      }
-    }
-
-    /* ------------------ LAST RESORT: SMALLEST NUMBER ------------------ */
-    if (winners.length === 0) {
-      const smallest = sorted[sorted.length - 1];
-      winners.push({
-        number: smallest.number,
-        quantity: smallest.qty,
-        value: smallest.qty * POINTS_PER_QUANTITY,
-      });
-    }
-
-    /* ------------------ SAVE GLOBAL RESULT ------------------ */
+    // Save the final winning numbers
     await winningNumbers.create({
       loginId: 0,
       winningNumbers: winners,
@@ -223,8 +255,9 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
       drawDate,
     });
 
-    console.log(`🎉 WINNERS SAVED FOR ${normalized}`);
+    console.log(`🎉 WINNING NUMBERS SAVED FOR ${normalized}`);
     return true;
+
   } catch (err) {
     console.error("❌ Auto Draw Error:", err);
     return false;

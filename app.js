@@ -19,6 +19,7 @@ import superadminRouter from './src/routes/superadmin.router.js'
 import winningNumberRouter from './src/routes/winningNumbers.router.js'
 import threedRouter from './src/routes/threed.rotuer.js'
 import adminBlockRouter from './src/routes/blockAdmin.router.js'
+import userAccountRouter from './src/routes/userAccount.router.js'
 
 import "./src/schedular/autoDrawScheduler.js"
 
@@ -72,6 +73,7 @@ app.use("/api", superadminRouter);
 app.use("/api", winningNumberRouter);
 app.use("/api", threedRouter);
 app.use("/api", adminBlockRouter);
+app.use("/api", userAccountRouter);
 // Start the server
 
 app.listen(port, ()=> {
