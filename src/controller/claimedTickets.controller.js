@@ -1,37 +1,13 @@
 import { tickets } from "../models/ticket.model.js";
 import { winningNumbers } from "../models/winningNumbers.model.js";
 import { claimedTickets } from "../models/claimedTickets.model.js";
-import { Op } from "sequelize";
-import Admin from "../models/admins.model.js";
 import dayjs from "dayjs";
+import Admin from "../models/admins.model.js";
 import { sequelizeCon } from "../init/dbConnection.js";
 
 /* ------------------------- HELPER FUNCTIONS ------------------------- */
 
-// Extract date from datetime (e.g. "27-07-2025 11:34:24" → "27-07-2025")
-function extractDate(datetimeStr) {
-  return typeof datetimeStr === "string" ? datetimeStr.split(" ")[0] : "";
-}
-
-// Parse "30-00 : 3, 30-11 : 4" → [{ ticketNumber: "3000", quantity: 3 }, ...]
-function parseTicketNumberString(ticketNumberStr) {
-  if (!ticketNumberStr) return [];
-  const parts = String(ticketNumberStr)
-    .replace(/"/g, "")
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean);
-
-  return parts.map((p) => {
-    const [num, qty] = p.split(":").map((s) => s.trim());
-    return {
-      ticketNumber: num ? num.replace("-", "") : "",
-      quantity: parseInt(qty) || 0,
-    };
-  });
-}
-
-// Normalize draw time to “HH:MM AM/PM”
+// Normalize draw time to "HH:MM AM/PM"
 function normalizeDrawTime(str) {
   if (!str) return "";
   let clean = String(str).trim().toUpperCase();
@@ -44,39 +20,56 @@ function normalizeDrawTime(str) {
   return `${h}:${m} ${period}`;
 }
 
-/* ---------------------- MAIN CONTROLLER ---------------------- */
+function parseDrawTimeToArray(raw) {
+  if (!raw) return [];
+
+  // Already array
+  if (Array.isArray(raw)) return raw.filter(Boolean).map(String);
+
+  // Try JSON parse
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean).map(String);
+      if (typeof parsed === "string" && parsed.trim()) return [parsed.trim()];
+    } catch {
+      return [s];
+    }
+  }
+
+  return [String(raw)];
+}
+
 
 export const checkTicketWinningStatus = async (req, res) => {
   try {
     const { ticketId } = req.body;
     const PAYOUT_RATE = 180;
 
-    // Step 1️⃣: Validate input
-    if (!ticketId || String(ticketId).trim() === "") {
+    // Step 1: Validate input
+    if (!ticketId) {
       return res.status(400).json({
         status: "error",
         message: "ticketId is required.",
       });
     }
 
-    console.log("🎯 Checking winning status for Ticket ID:", ticketId);
+    console.log("🎯 Checking Ticket ID:", ticketId);
 
-    // Step 2️⃣: Check if already claimed
+    // Step 2: Check if already claimed
     const alreadyClaimed = await claimedTickets.findOne({
       where: { TicketId: ticketId },
-      attributes: ["id", "TicketId", "drawDate", "claimedDate", "claimedTime"],
     });
 
     if (alreadyClaimed) {
-      console.log("⚠️ Ticket already claimed:", alreadyClaimed.toJSON());
       return res.status(200).json({
         status: "already_claimed",
         message: "This ticket has already been claimed.",
-        claimedDetails: alreadyClaimed,
       });
     }
 
-    // Step 3️⃣: Fetch ticket details
+    // Step 3: Fetch ticket details
     const ticket = await tickets.findOne({
       where: { id: ticketId },
       attributes: ["id", "loginId", "ticketNumber", "drawTime", "gameTime"],
@@ -89,130 +82,134 @@ export const checkTicketWinningStatus = async (req, res) => {
       });
     }
 
-    console.log("\n🎟️ Ticket Found:", JSON.stringify(ticket.toJSON(), null, 2));
-    const { loginId, ticketNumber, drawTime, gameTime } = ticket;
+    const { ticketNumber, drawTime, gameTime } = ticket;
 
-    // Step 4️⃣: Format draw date (YYYY-MM-DD)
+    // Step 4: Get draw date from gameTime (format: "16-11-2025 16:22:09" → "2025-11-16")
     let drawDate = "";
     if (typeof gameTime === "string") {
-      const datePart = gameTime.split(" ")[0];
-      const parts = datePart.split("-");
-      if (parts.length === 3) drawDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-    } else {
-      drawDate = new Date(gameTime).toISOString().split("T")[0];
+      const datePart = gameTime.split(" ")[0]; // "16-11-2025"
+      const parts = datePart.split("-"); // ["16", "11", "2025"]
+      if (parts.length === 3) {
+        drawDate = `${parts[2]}-${parts[1]}-${parts[0]}`; // "2025-11-16"
+      }
     }
 
-    // Step 5️⃣: Parse draw times
+    console.log("📅 Draw Date:", drawDate);
+
+    // Step 5: Parse draw times
     let parsedDrawTimes = [];
     try {
-      parsedDrawTimes = Array.isArray(drawTime)
-        ? drawTime
-        : JSON.parse(drawTime);
+      parsedDrawTimes = Array.isArray(drawTime) ? drawTime : JSON.parse(drawTime);
     } catch {
       parsedDrawTimes = [drawTime];
     }
+    
     parsedDrawTimes = parsedDrawTimes
       .map((t) => normalizeDrawTime(t))
       .filter(Boolean);
 
     console.log("🕒 Draw Times:", parsedDrawTimes);
 
-    // Step 6️⃣: Fetch winning numbers for date
-    const allWinningRows = await winningNumbers.findAll({
+    // Step 6: Parse ticket numbers
+    let parsedTickets = [];
+    try {
+      parsedTickets = Array.isArray(ticketNumber) ? ticketNumber : JSON.parse(ticketNumber);
+    } catch (error) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid ticket number format.",
+      });
+    }
+
+    console.log("🎫 Ticket Numbers:", parsedTickets);
+
+    // Step 7: Fetch winning numbers for the date
+    const winningRows = await winningNumbers.findAll({
       where: { drawDate },
-      attributes: ["winningNumbers", "DrawTime", "drawDate"],
+      attributes: ["winningNumbers", "DrawTime"],
     });
 
-    if (!allWinningRows.length) {
-      console.warn("⚠️ No winning numbers found for this date.");
+    if (!winningRows.length) {
       return res.status(200).json({
         status: "no_winning_data",
         message: "No winning numbers found for this draw date.",
         drawDate,
-        drawTimes: parsedDrawTimes,
       });
     }
 
-    // Step 7️⃣: Match relevant draw times (fixed version)
-    const matchedRows = [];
-    for (const row of allWinningRows) {
-      let winTimes = [];
+    // Step 8: Find matching draw times and get winning numbers
+    const allWinningNumbers = new Set();
 
+    for (const row of winningRows) {
+      let winTimes = [];
+      
+      // Parse draw times from winning numbers row
       try {
         if (Array.isArray(row.DrawTime)) {
           winTimes = row.DrawTime;
         } else if (typeof row.DrawTime === "string") {
           try {
             const parsed = JSON.parse(row.DrawTime);
-            if (Array.isArray(parsed)) {
-              winTimes = parsed;
-            } else if (typeof parsed === "string") {
-              winTimes = [parsed];
-            } else {
-              winTimes = [row.DrawTime];
-            }
+            winTimes = Array.isArray(parsed) ? parsed : [parsed];
           } catch {
             winTimes = [row.DrawTime];
           }
-        } else if (row.DrawTime) {
-          winTimes = [String(row.DrawTime)];
         }
       } catch {
         winTimes = [];
       }
 
-      winTimes = Array.isArray(winTimes)
-        ? winTimes.map((t) => normalizeDrawTime(t))
-        : [];
+      // Normalize winning draw times
+      winTimes = winTimes.map((t) => normalizeDrawTime(t)).filter(Boolean);
 
-      if (parsedDrawTimes.some((t) => winTimes.includes(t))) {
-        matchedRows.push(row);
+      // Check if any draw time matches
+      const hasMatchingDrawTime = parsedDrawTimes.some((ticketTime) => 
+        winTimes.includes(ticketTime)
+      );
+
+      if (hasMatchingDrawTime) {
+        // Parse winning numbers
+        let winners = [];
+        try {
+          winners = Array.isArray(row.winningNumbers) 
+            ? row.winningNumbers 
+            : JSON.parse(row.winningNumbers);
+        } catch {
+          winners = [];
+        }
+
+        // Add winning numbers to set
+        winners.forEach(win => {
+          if (win && win.number) {
+            allWinningNumbers.add(win.number);
+          }
+        });
       }
     }
 
-    if (!matchedRows.length) {
-      return res.status(200).json({
-        status: "no_match",
-        message: "No matching draw time found.",
-        drawDate,
-        drawTimes: parsedDrawTimes,
-      });
-    }
+    console.log("🏆 Winning Numbers:", Array.from(allWinningNumbers));
 
-    // Step 8️⃣: Parse ticket numbers
-    const parsedTickets = parseTicketNumberString(ticketNumber);
-
-    // Step 9️⃣: Combine all winning numbers
-    const winningNumbersSet = new Set();
-    for (const row of matchedRows) {
-      let winners = [];
-      try {
-        winners = Array.isArray(row.winningNumbers)
-          ? row.winningNumbers
-          : JSON.parse(row.winningNumbers);
-      } catch {
-        winners = [];
-      }
-      for (const w of winners) {
-        if (w.number) winningNumbersSet.add(w.number);
-      }
-    }
-
-    // Step 🔟: Compare & find matches
+    // Step 9: Check for matches between ticket numbers and winning numbers
     const matches = [];
-    for (const tkt of parsedTickets) {
-      if (winningNumbersSet.has(tkt.ticketNumber)) {
-        const payout = tkt.quantity * PAYOUT_RATE;
+    
+    for (const ticket of parsedTickets) {
+      if (allWinningNumbers.has(ticket.ticketNumber)) {
+        const payout = ticket.quantity * PAYOUT_RATE;
         matches.push({
-          number: tkt.ticketNumber,
-          quantity: tkt.quantity,
+          number: ticket.ticketNumber,
+          quantity: ticket.quantity,
           payout,
         });
       }
     }
 
-    // Step 1️⃣1️⃣: Respond
-    if (!matches.length) {
+    console.log("✅ Matches Found:", matches);
+
+    // Step 10: Calculate total winning amount
+    const totalWinningAmount = matches.reduce((sum, match) => sum + match.payout, 0);
+
+    // Step 11: Send response
+    if (matches.length === 0) {
       return res.status(200).json({
         status: "no_win",
         message: "Ticket has no winning numbers.",
@@ -223,13 +220,6 @@ export const checkTicketWinningStatus = async (req, res) => {
       });
     }
 
-    const totalWinningAmount = matches.reduce(
-      (sum, m) => sum + m.payout,
-      0
-    );
-
-    console.log("🎉 Winning ticket found!");
-
     return res.status(200).json({
       status: "winner",
       message: "This is a winning ticket!",
@@ -238,21 +228,18 @@ export const checkTicketWinningStatus = async (req, res) => {
       drawTimes: parsedDrawTimes,
       matches,
       totalWinningAmount,
-      winningNumbers: Array.from(winningNumbersSet),
+      winningNumbers: Array.from(allWinningNumbers),
       claimable: true,
     });
+
   } catch (error) {
     console.error("🔥 Error checking ticket status:", error);
     return res.status(500).json({
       status: "error",
-      message:
-        error.message ||
-        "An unexpected error occurred while checking the ticket status.",
+      message: "An unexpected error occurred while checking the ticket status.",
     });
   }
 };
-
-
 
 function toYYYYMMDD(input) {
   const s = String(input || "");
@@ -318,37 +305,34 @@ function parseTicketNumberAny(raw) {
 
 export const claimTicket = async (req, res) => {
   const t = await sequelizeCon.transaction();
+
   try {
     const { ticketId } = req.body;
     const PAYOUT_RATE = 180;
 
-    console.log("\n🎯 CLAIM PROCESS STARTED");
-    console.log("➡️ Received Ticket ID:", ticketId);
-
     if (!ticketId) {
+      await t.rollback();
       return res.status(400).json({
         status: "error",
         message: "ticketId is required",
       });
     }
 
-    // Step 1️⃣: Check if already claimed
-    const existingClaim = await claimedTickets.findOne({
+    /* 1️⃣ Check if already claimed */
+    const alreadyClaimed = await claimedTickets.findOne({
       where: { TicketId: ticketId },
-      attributes: ["id", "TicketId"],
       transaction: t,
     });
 
-    if (existingClaim) {
+    if (alreadyClaimed) {
       await t.rollback();
-      console.warn(`⚠️ Ticket ${ticketId} already claimed.`);
       return res.status(409).json({
         status: "already_claimed",
-        message: `Ticket ${ticketId} has already been claimed.`,
+        message: "Ticket already claimed",
       });
     }
 
-    // Step 2️⃣: Fetch the ticket
+    /* 2️⃣ Fetch Ticket */
     const ticket = await tickets.findOne({
       where: { id: ticketId },
       attributes: ["id", "loginId", "ticketNumber", "drawTime", "gameTime"],
@@ -357,96 +341,94 @@ export const claimTicket = async (req, res) => {
 
     if (!ticket) {
       await t.rollback();
-      console.warn(`❌ No ticket found for ID: ${ticketId}`);
       return res.status(404).json({
         status: "error",
         message: "Ticket not found",
       });
     }
 
-    console.log("\n🎟️ Ticket Found:", JSON.stringify(ticket.toJSON(), null, 2));
     const { loginId, ticketNumber, drawTime, gameTime } = ticket;
 
-    // Step 3️⃣: Format Draw Date
+    /* 3️⃣ Extract drawDate from gameTime → "16-11-2025 16:22:09" → "2025-11-16" */
     let drawDate = "";
     if (typeof gameTime === "string") {
-      const datePart = gameTime.split(" ")[0];
+      const datePart = gameTime.split(" ")[0]; // 16-11-2025
       const parts = datePart.split("-");
-      if (parts.length === 3) drawDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-    } else {
-      drawDate = new Date(gameTime).toISOString().split("T")[0];
+      if (parts.length === 3) {
+        drawDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+      }
     }
 
-    // Step 4️⃣: Parse Draw Times
+    /* 4️⃣ Parse drawTimes safely */
     let parsedDrawTimes = [];
     try {
-      parsedDrawTimes = Array.isArray(drawTime)
-        ? drawTime
-        : JSON.parse(drawTime);
-    } catch (err) {
+      parsedDrawTimes = Array.isArray(drawTime) ? drawTime : JSON.parse(drawTime);
+    } catch {
       parsedDrawTimes = [drawTime];
     }
 
-    // Step 5️⃣: Fetch Winning Numbers
-    const allWinningRows = await winningNumbers.findAll({
+    parsedDrawTimes = parsedDrawTimes
+      .map((t) => normalizeDrawTime(t))
+      .filter(Boolean);
+
+    /* 5️⃣ Parse ticket numbers safely */
+    let parsedTickets = [];
+    try {
+      parsedTickets = Array.isArray(ticketNumber)
+        ? ticketNumber
+        : JSON.parse(ticketNumber);
+    } catch {
+      await t.rollback();
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid ticket number format",
+      });
+    }
+
+    /* 6️⃣ Fetch all winning rows for that date */
+    const winningRows = await winningNumbers.findAll({
       where: { drawDate },
-      attributes: ["winningNumbers", "DrawTime", "drawDate"],
+      attributes: ["winningNumbers", "DrawTime"],
       transaction: t,
     });
 
-    if (!allWinningRows.length) {
+    if (!winningRows.length) {
       await t.rollback();
-      console.warn("⚠️ No winning numbers found for this date.");
       return res.status(200).json({
         status: "no_winning_data",
-        message: "No winning numbers found for this draw date.",
+        message: "Winning numbers not published for this date",
       });
     }
 
-    // Step 6️⃣: Filter Relevant Draw Times
-    const matchedRows = [];
-    for (const row of allWinningRows) {
+    /* 7️⃣ Build set of winning numbers matching draw times */
+    const winSet = new Set();
+
+    for (const row of winningRows) {
       let winTimes = [];
+
+      // Parse DrawTime formats
       try {
-        winTimes = Array.isArray(row.DrawTime)
-          ? row.DrawTime
-          : JSON.parse(row.DrawTime);
+        if (Array.isArray(row.DrawTime)) {
+          winTimes = row.DrawTime;
+        } else if (typeof row.DrawTime === "string") {
+          try {
+            const parsed = JSON.parse(row.DrawTime);
+            winTimes = Array.isArray(parsed) ? parsed : [parsed];
+          } catch {
+            winTimes = [row.DrawTime];
+          }
+        }
       } catch {
         winTimes = [];
       }
-      if (parsedDrawTimes.some((t) => winTimes.includes(t))) {
-        matchedRows.push(row);
-      }
-    }
 
-    if (!matchedRows.length) {
-      await t.rollback();
-      console.warn("❌ No matching draw time found between ticket and winners.");
-      return res.status(200).json({
-        status: "no_match",
-        message: "No matching draw time found.",
-      });
-    }
+      winTimes = winTimes.map((t) => normalizeDrawTime(t)).filter(Boolean);
 
-    // Step 7️⃣: Parse Ticket Numbers
-    let parsedTickets = [];
-    try {
-      const cleaned = ticketNumber.replace(/"/g, "");
-      const parts = cleaned.split(",").map((x) => x.trim());
-      parsedTickets = parts.map((p) => {
-        const [num, qty] = p.split(":").map((x) => x.trim());
-        return {
-          number: num.replace("-", ""),
-          qty: parseInt(qty) || 0,
-        };
-      });
-    } catch (err) {
-      console.error("⚠️ Error parsing ticket numbers:", err);
-    }
+      // Match draw times
+      const match = parsedDrawTimes.some((t) => winTimes.includes(t));
+      if (!match) continue;
 
-    // Step 8️⃣: Combine Winning Numbers
-    const winningNumbersSet = new Set();
-    for (const row of matchedRows) {
+      // Parse winning numbers safely
       let winners = [];
       try {
         winners = Array.isArray(row.winningNumbers)
@@ -455,36 +437,37 @@ export const claimTicket = async (req, res) => {
       } catch {
         winners = [];
       }
-      for (const w of winners) {
-        if (w.number) winningNumbersSet.add(w.number);
-      }
+
+      winners.forEach((w) => {
+        if (w && w.number) winSet.add(w.number);
+      });
     }
 
-    // Step 9️⃣: Compare & Find Matches
+    /* 8️⃣ Compare ticket numbers */
     const matches = [];
-    for (const tkt of parsedTickets) {
-      if (winningNumbersSet.has(tkt.number)) {
-        const payout = tkt.qty * PAYOUT_RATE;
+
+    for (const tk of parsedTickets) {
+      if (winSet.has(tk.ticketNumber)) {
         matches.push({
-          number: tkt.number,
-          quantity: tkt.qty,
-          payout,
+          number: tk.ticketNumber,
+          quantity: tk.quantity,
+          payout: tk.quantity * PAYOUT_RATE,
         });
       }
     }
 
     if (!matches.length) {
       await t.rollback();
-      console.warn("😞 No winning numbers in this ticket.");
       return res.status(200).json({
         status: "no_win",
-        message: "Ticket has no winning numbers.",
+        message: "Ticket has no winning numbers",
       });
     }
 
-    const totalWinningAmount = matches.reduce((sum, m) => sum + m.payout, 0);
+    /* 9️⃣ Total winning amount */
+    const totalWinningAmount = matches.reduce((s, m) => s + m.payout, 0);
 
-    // Step 🔟: Save Claim
+    /* 🔟 Insert into claimedTickets table */
     const now = new Date();
     const claimedDate = now.toISOString().split("T")[0];
     const claimedTime = now.toTimeString().split(" ")[0];
@@ -502,9 +485,7 @@ export const claimTicket = async (req, res) => {
       { transaction: t }
     );
 
-    console.log(`💾 Ticket ${ticketId} saved to claimedTickets.`);
-
-    // Step 1️⃣1️⃣: Update Admin Balance (same as cancelTicket logic)
+    /* 1️⃣1️⃣ Update admin balance */
     const admin = await Admin.findOne({
       where: { id: loginId },
       transaction: t,
@@ -512,39 +493,35 @@ export const claimTicket = async (req, res) => {
     });
 
     if (admin) {
-      const prevBalance = Number(admin.balance) || 0;
-      const newBalance = prevBalance + totalWinningAmount;
-      admin.balance = newBalance;
+      admin.balance = Number(admin.balance || 0) + totalWinningAmount;
       await admin.save({ transaction: t });
-      console.log(
-        `💰 Admin ${loginId} balance updated: ${prevBalance} + ${totalWinningAmount} = ${newBalance}`
-      );
-    } else {
-      console.warn(`⚠️ Admin not found for loginId ${loginId}`);
     }
 
+    /* 1️⃣2️⃣ Commit transaction */
     await t.commit();
 
-    // ✅ Final Response
     return res.status(201).json({
       status: "ticket_claimed",
-      message: `Ticket successfully claimed! ₹${totalWinningAmount} added to admin balance.`,
+      message: `Ticket claimed. ₹${totalWinningAmount} added to balance.`,
       ticketId,
       drawDate,
-      drawTime: parsedDrawTimes,
+      drawTimes: parsedDrawTimes,
       matches,
       totalWinningAmount,
     });
-  } catch (error) {
+
+  } catch (err) {
     await t.rollback();
-    console.error("🔥 Error in claimTicket:", error);
+    console.error("🔥 CLAIM ERROR:", err);
     return res.status(500).json({
       status: "error",
-      message: "Internal server error while claiming ticket.",
-      error: error.message,
+      message: "Server error during ticket claim",
+      error: err.message,
     });
   }
 };
+
+
 
 
 const getTotalQuantity = (ticketNumbers) => {
@@ -554,7 +531,7 @@ const getTotalQuantity = (ticketNumbers) => {
 
 const extractTicketNumbers = (ticketNumbers) => {
   if (!Array.isArray(ticketNumbers)) return [];
-  return ticketNumbers.map((item) => item?.number);
+  return ticketNumbers.map((item) => item?.ticketNumber);  // Make sure it's ticketNumber, not 'number'
 };
 
 export const getClaimedTickets = async (req, res) => {
@@ -602,13 +579,24 @@ export const getClaimedTickets = async (req, res) => {
 
     const formattedData = claimed.map((row) => {
       let ticketNumbersArr = row.ticketNumbers;
+
       if (typeof ticketNumbersArr === "string") {
         try {
-          ticketNumbersArr = JSON.parse(ticketNumbersArr);
+          ticketNumbersArr = JSON.parse(ticketNumbersArr);  // Ensure ticketNumbers is parsed correctly
         } catch {
           ticketNumbersArr = [];
         }
       }
+
+      // Clean the ticketNumbers array (parse and clean them if needed)
+      const cleanedTicketNumbers = ticketNumbersArr.map((ticket) => {
+        // Ensure each ticket number and quantity is correctly parsed and formatted
+        const { ticketNumber, quantity } = ticket;
+        return {
+          ticketNumber: ticketNumber.replace(/[^0-9]/g, ""), // Keep only numeric values in ticket number
+          quantity: quantity || 0,  // Default to 0 if quantity is missing
+        };
+      });
 
       const admin = adminMap[row.loginId] || {
         shopName: "Unknown",
@@ -626,8 +614,8 @@ export const getClaimedTickets = async (req, res) => {
         drawTime: row.drawTime,
         claimedDate: row.claimedDate,
         claimedTime: row.claimedTime,
-        totalQuantity: getTotalQuantity(ticketNumbersArr),
-        ticketNumbers: extractTicketNumbers(ticketNumbersArr),
+        totalQuantity: getTotalQuantity(cleanedTicketNumbers),
+        ticketNumbers: extractTicketNumbers(cleanedTicketNumbers),
       };
     });
 

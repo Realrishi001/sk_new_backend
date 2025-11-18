@@ -46,11 +46,11 @@ const Admin = sequelizeCon.define(
       allowNull: true,
     },
     address: {
-      type: DataTypes.TEXT,   // long text for address
+      type: DataTypes.TEXT,
       allowNull: true,
     },
     phoneNumber: {
-      type: DataTypes.STRING, // STRING to allow formatted numbers
+      type: DataTypes.STRING,
       allowNull: true,
     },
     emailAddress: {
@@ -74,24 +74,32 @@ const Admin = sequelizeCon.define(
       defaultValue: false,
       allowNull: false,
     },
-
     blockTill: {
       type: DataTypes.DATE,
-      allowNull: true,   
+      allowNull: true,
+    },
+    isLoggedIn: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      allowNull: false,
     },
 
+    // ⭐ NEW COLUMN ADDED ⭐
+    priorWinning: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      allowNull: false,
+    }
   },
   {
     timestamps: true,
     hooks: {
-      // Hash password before creating user
       beforeCreate: async (admin) => {
         if (admin.password) {
           const salt = await bcrypt.genSalt(10);
           admin.password = await bcrypt.hash(admin.password, salt);
         }
       },
-      // Hash password before updating if it's changed
       beforeUpdate: async (admin) => {
         if (admin.changed("password")) {
           const salt = await bcrypt.genSalt(10);

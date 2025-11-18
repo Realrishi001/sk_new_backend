@@ -20,6 +20,9 @@ import winningNumberRouter from './src/routes/winningNumbers.router.js'
 import threedRouter from './src/routes/threed.rotuer.js'
 import adminBlockRouter from './src/routes/blockAdmin.router.js'
 import userAccountRouter from './src/routes/userAccount.router.js'
+import autoDrawRouter from './src/routes/testAutoDraw.router.js'
+import topSellerRouter from './src/routes/topSeller.router.js'
+import priorWinningRouter from './src/routes/priorWinning.router.js'
 
 import "./src/schedular/autoDrawScheduler.js"
 
@@ -74,6 +77,9 @@ app.use("/api", winningNumberRouter);
 app.use("/api", threedRouter);
 app.use("/api", adminBlockRouter);
 app.use("/api", userAccountRouter);
+app.use("/api/auto-draw", autoDrawRouter);
+app.use("/api", topSellerRouter);
+app.use("/api", priorWinningRouter);
 // Start the server
 
 app.listen(port, ()=> {

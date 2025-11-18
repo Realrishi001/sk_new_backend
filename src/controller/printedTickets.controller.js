@@ -3,12 +3,42 @@ import { sequelizeCon } from "../init/dbConnection.js";
 import Admin from "../models/admins.model.js";
 import { tickets } from "../models/ticket.model.js";
 
+// Function to parse the ticket number string into a clean JSON format
+const parseTicketNumberString = (ticketNumberStr) => {
+  const parsedData = [];
+
+  if (!ticketNumberStr) return parsedData;
+
+  try {
+    // Split the string by commas (each ticket number and quantity pair)
+    const pairs = ticketNumberStr
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+    // For each pair, split by colon to separate ticket number and quantity
+    parsedData.push(
+      ...pairs.map((p) => {
+        const [num, qty] = p.split(":").map((s) => s.trim());
+        return {
+          ticketNumber: num.replace("-", ""),  // Clean up the ticket number
+          quantity: parseInt(qty) || 0,         // Ensure quantity is a number
+        };
+      })
+    );
+  } catch (err) {
+    console.log("Parse error:", err);
+  }
+
+  return parsedData;
+};
+
 export const savePrintedTickets = async (req, res) => {
   const t = await sequelizeCon.transaction();
   try {
     let {
       gameTime,
-      ticketNumber,
+      ticketNumber, // Example format: "10-00 : 1, 11-00 : 1, ..."
       totalQuatity,
       totalPoints,
       loginId,
@@ -96,17 +126,22 @@ export const savePrintedTickets = async (req, res) => {
 
     console.log("✅ Balance after deduction:", admin.balance.toFixed(2));
 
+    // --- Process and Store Ticket Number as JSON ---
+    // Parse the ticket number string into a JSON object (key-value pairs)
+    const parsedTicketNumbers = parseTicketNumberString(ticketNumber);
+
+    // Directly use the parsedTicketNumbers (no need to stringify it if you're storing it as JSON)
+    console.log("🧾 Parsed Ticket Numbers (JSON):", parsedTicketNumbers);
+
     // --- Create Ticket Record ---
     const newTicket = await tickets.create(
       {
         gameTime,
         loginId,
-        ticketNumber,
+        ticketNumber: parsedTicketNumbers, // Store as an actual JSON object, no stringification
         totalQuatity,
-
         // ✅ SAVE ONLY THE NET POINTS AFTER COMMISSION
         totalPoints: Number(finalDeductPoints),
-
         drawTime,
         commissionApplied: commissionPercent,
         commissionEarned: commissionAmount,
@@ -115,7 +150,7 @@ export const savePrintedTickets = async (req, res) => {
       { transaction: t }
     );
 
-    // Commit
+    // Commit transaction
     await t.commit();
 
     console.log("🎟️ Ticket saved successfully:", newTicket.id);

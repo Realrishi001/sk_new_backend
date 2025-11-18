@@ -151,33 +151,42 @@ export const getAllAdmins = async (req, res) => {
   }
 };
 
+
 export const adminLogin = async (req, res) => {
   try {
     const { userName, password } = req.body;
 
+    // Validate input
     if (!userName || !password) {
       return res.status(400).json({ message: "Username and password are required." });
     }
 
+    // Find the admin by username
     const admin = await Admin.findOne({ where: { userName } });
     if (!admin) {
       return res.status(401).json({ message: "Invalid username or password." });
     }
 
+    // Compare the password with the stored hash
     const isMatch = await bcrypt.compare(password, admin.password);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid username or password." });
     }
+
+    admin.isLoggedIn = true;
+    await admin.save();  // Save the updated status to the database
 
     const payload = {
       id: admin.id,
       userName: admin.userName
     };
 
+    // Generate JWT token
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1d" });
 
+    // Return success message with the token
     res.status(200).json({
-      message: "Login Successfull!",
+      message: "Login successful!",
       token
     });
 
@@ -186,7 +195,6 @@ export const adminLogin = async (req, res) => {
     res.status(500).json({ message: "Server error.", error: error.message });
   }
 };
-
 
 
 export const updateAdmin = async (req, res) => {
@@ -257,6 +265,67 @@ export const updateAdmin = async (req, res) => {
   }
 };
 
+export const adminLogout = async (req, res) => {
+  try {
+    const { adminId } = req.body;
+    
+    // Validate adminId
+    if (!adminId) {
+      return res.status(400).json({ message: "Admin ID is required for logout." });
+    }
+
+    // Find the admin by ID
+    const admin = await Admin.findByPk(adminId);
+    if (!admin) {
+      return res.status(404).json({ message: "Admin not found." });
+    }
+
+    // Set isLoggedIn to false after logout
+    admin.isLoggedIn = false;
+    await admin.save();  // Save the updated status to the database
+
+    return res.status(200).json({
+      message: "Logout successful!"
+    });
+
+  } catch (error) {
+    console.error("Admin logout error:", error);
+    res.status(500).json({ message: "Server error.", error: error.message });
+  }
+};
+
+export const getAllAdminsStatus = async (req, res) => {
+  try {
+    // Fetch all admins' ids, shopName, and isLoggedIn status
+    const admins = await Admin.findAll({
+      attributes: ["id", "shopName", "isLoggedIn"], // Only retrieve id, shopName, and isLoggedIn
+    });
+
+    // Check if admins are found
+    if (!admins.length) {
+      return res.status(404).json({
+        status: "error",
+        message: "No admins found.",
+      });
+    }
+
+    // Return the list of admins with their status
+    return res.status(200).json({
+      status: "success",
+      admins: admins.map((admin) => ({
+        id: admin.id,
+        shopName: admin.shopName,
+        isLoggedIn: admin.isLoggedIn,
+      })),
+    });
+  } catch (error) {
+    console.error("Error in getAllAdminsStatus:", error);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error while fetching admins' status.",
+    });
+  }
+};
 
 
 export const updateAdminCommission = async (req, res) => {
