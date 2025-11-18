@@ -74,7 +74,6 @@ function getNextDrawSlotDate() {
   return now;
 }
 
-/* ---------- Controller 1: Show Today's Active Tickets ---------- */
 export const getTicketsByDrawTimeForToday = async (req, res) => {
   try {
     const { loginId } = req.body;
@@ -89,6 +88,9 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
     console.log(`\n🧾 [TICKET CHECK] Admin ID: ${loginId}`);
     console.log(`📅 Today: ${today}`);
 
+    /* -------------------------------------------------------------
+       FETCH TODAY'S TICKETS
+    ------------------------------------------------------------- */
     const todaysTickets = await tickets.findAll({
       where: {
         loginId,
@@ -105,24 +107,56 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
       return res.json([]);
     }
 
-    let allDrawTimes = [];
-    todaysTickets.forEach((t) => {
-      const times = flattenDrawTimes(t.drawTime);
-      allDrawTimes.push(...times);
-    });
-    allDrawTimes = [...new Set(allDrawTimes.filter(Boolean))];
+    /* -------------------------------------------------------------
+       PARSE DRAW TIMES (ALWAYS CLEAN JSON)
+    ------------------------------------------------------------- */
+    const parseDrawTime = (dt) => {
+      if (!dt) return [];
 
-    console.log(`🕒 Unique draw times:`, JSON.stringify(allDrawTimes));
+      try {
+        if (Array.isArray(dt)) return dt;
+        if (typeof dt === "string" && dt.trim().startsWith("[")) {
+          return JSON.parse(dt);
+        }
+        return [dt];
+      } catch {
+        return [dt];
+      }
+    };
 
-    const targetSlot = getNextDrawSlot();
-    const hour12 = targetSlot.replace(/^0/, "");
-    const targetVariants = [targetSlot, hour12];
+    /* -------------------------------------------------------------
+       PARSE TICKET NUMBER (ALWAYS CLEAN JSON)
+    ------------------------------------------------------------- */
+    const parseTicketNumber = (tn) => {
+      try {
+        if (!tn) return [];
 
-    console.log(`🎯 Target Draw Slot: ${targetSlot}`);
+        if (typeof tn === "string" && tn.trim().startsWith("[")) {
+          return JSON.parse(tn); // [{ticketNumber:"5000", quantity:2}, ...]
+        }
 
+        if (Array.isArray(tn)) return tn;
+
+        return [];
+      } catch {
+        return [];
+      }
+    };
+
+    /* -------------------------------------------------------------
+       GET TARGET SLOT (MATCHES 02:00 PM & 2:00 PM)
+    ------------------------------------------------------------- */
+    const targetSlot = getNextDrawSlot(); // "02:00 PM"
+    const altSlot = targetSlot.replace(/^0/, ""); // "2:00 PM"
+
+    console.log(`🎯 Target Draw Time: ${targetSlot} / ${altSlot}`);
+
+    /* -------------------------------------------------------------
+       FILTER TICKETS MATCHING DRAW TIME
+    ------------------------------------------------------------- */
     const filteredTickets = todaysTickets.filter((t) => {
-      const times = flattenDrawTimes(t.drawTime);
-      return times.some((tm) => targetVariants.includes(tm));
+      const times = parseDrawTime(t.drawTime);
+      return times.includes(targetSlot) || times.includes(altSlot);
     });
 
     if (!filteredTickets.length) {
@@ -130,28 +164,34 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
       return res.json([]);
     }
 
-    console.log(`✅ ${filteredTickets.length} tickets matched draw: ${targetSlot}`);
+    console.log(`✅ ${filteredTickets.length} tickets matched draw time.`);
 
-    return res.json([
+    /* -------------------------------------------------------------
+       CLEAN FINAL RESPONSE FOR FRONTEND
+    ------------------------------------------------------------- */
+    const finalResponse = [
       {
         drawTime: targetSlot,
         drawDate: today,
         tickets: filteredTickets.map((t) => ({
           id: t.id,
           loginId: t.loginId,
-          drawTime: t.drawTime,
-          ticketNumber: t.ticketNumber,
-          totalPoints: t.totalPoints,
+          drawTime: parseDrawTime(t.drawTime), // array
+          ticketNumber: parseTicketNumber(t.ticketNumber), // proper array of objects
+          totalPoints: parseFloat(t.totalPoints),
           totalQuatity: t.totalQuatity,
           createdAt: t.createdAt,
         })),
       },
-    ]);
+    ];
+
+    return res.json(finalResponse);
   } catch (error) {
     console.error("🔥 Error in getTicketsByDrawTimeForToday:", error);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
+
 
 /* ---------- Controller 2: Cancel Ticket by Ticket Number ---------- */
 export const deleteTicketByNumber = async (req, res) => {

@@ -114,9 +114,13 @@ const getSeriesKeyFromNumber = (numStr) => {
 // ------------------ RANDOM SERIES NUMBER -----------------
 const genRandomInSeries = (seriesKey) => {
   let allowed = [];
-  if (seriesKey === "10") for (let i = 10; i <= 19; i++) allowed.push(i);
-  if (seriesKey === "30") for (let i = 30; i <= 39; i++) allowed.push(i);
-  if (seriesKey === "50") for (let i = 50; i <= 59; i++) allowed.push(i);
+  if (seriesKey === "10") {
+    for (let i = 10; i <= 19; i++) allowed.push(i);
+  } else if (seriesKey === "30") {
+    for (let i = 30; i <= 39; i++) allowed.push(i);
+  } else if (seriesKey === "50") {
+    for (let i = 50; i <= 59; i++) allowed.push(i);
+  }
 
   const prefix = allowed[Math.floor(Math.random() * allowed.length)];
   const suffix = Math.floor(Math.random() * 100)
@@ -136,20 +140,84 @@ const countPurchasedInSeries = (seriesKey, purchasedSet) => {
 };
 
 // ------------------ FILL SERIES (shared) -----------------
+// ------------------ FILL SERIES (shared) -----------------
 const fillSeriesWithRules = (seriesKey, initialArr, purchasedSet, usedWinners) => {
   const result = [...initialArr];
   const present = new Set(result.map((r) => String(r.number)));
   const purchasedCount = countPurchasedInSeries(seriesKey, purchasedSet);
   const allowRepeats = purchasedCount >= 1000;
+  
+  const seriesStart = seriesKey === "10" ? 10 : seriesKey === "30" ? 30 : 50;
+  
+  // First, ensure all initial winners are from the correct series
+  const validatedInitial = initialArr.filter(item => {
+    const series = getSeriesKeyFromNumber(item.number);
+    return series === seriesKey;
+  });
+  
+  result.length = 0; // Clear array
+  validatedInitial.forEach(item => {
+    result.push(item);
+    present.add(String(item.number));
+  });
+
+  // Get used prefixes in this series
+  const usedPrefixes = new Set();
+  result.forEach(item => {
+    const prefix = Math.floor(Number(item.number) / 100);
+    usedPrefixes.add(prefix);
+  });
+
+  // Generate missing numbers ensuring one from each prefix
+  const allPrefixes = [];
+  for (let i = 0; i < 10; i++) {
+    allPrefixes.push(seriesStart + i);
+  }
+
+  // Shuffle prefixes for randomness
+  for (let i = allPrefixes.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [allPrefixes[i], allPrefixes[j]] = [allPrefixes[j], allPrefixes[i]];
+  }
+
+  // Fill missing prefixes first
+  for (let prefix of allPrefixes) {
+    if (result.length >= 10) break;
+    if (usedPrefixes.has(prefix)) continue;
+
+    let candidate;
+    let tries = 0;
+    const MAX_TRIES = 100;
+
+    do {
+      const suffix = Math.floor(Math.random() * 100).toString().padStart(2, "0");
+      candidate = String(prefix).padStart(2, "0") + suffix;
+      tries++;
+    } while (
+      (present.has(candidate) || 
+       (!allowRepeats && purchasedSet.has(candidate)) ||
+       usedWinners.has(candidate)) && 
+      tries < MAX_TRIES
+    );
+
+    if (tries < MAX_TRIES) {
+      result.push({ number: candidate, quantity: 0, value: 0 });
+      present.add(candidate);
+      usedWinners.add(candidate);
+      usedPrefixes.add(prefix);
+    }
+  }
+
+  // If still not full, fill with any available numbers in the series
   let tries = 0;
   const MAX_TRIES = 30000;
 
   while (result.length < 10 && tries < MAX_TRIES) {
     tries++;
     const candidate = genRandomInSeries(seriesKey);
+    
     if (present.has(candidate)) continue;
 
-    // For case-4 (fully random) we'll handle by passing an empty purchasedSet or usedWinners appropriately.
     if (!purchasedSet.has(candidate) && !usedWinners.has(candidate)) {
       result.push({ number: candidate, quantity: 0, value: 0 });
       present.add(candidate);
@@ -163,12 +231,12 @@ const fillSeriesWithRules = (seriesKey, initialArr, purchasedSet, usedWinners) =
     }
   }
 
-  // deterministic fallback if still not full (rare)
+  // Final deterministic fallback
   if (result.length < 10) {
-    const firstTwoStart = seriesKey === "10" ? 10 : seriesKey === "30" ? 30 : 50;
-    for (let ft = firstTwoStart; ft <= firstTwoStart + 9 && result.length < 10; ft++) {
+    for (let ft = seriesStart; ft <= seriesStart + 9 && result.length < 10; ft++) {
       for (let lt = 0; lt <= 99 && result.length < 10; lt++) {
         const cand = String(ft).padStart(2, "0") + String(lt).padStart(2, "0");
+        
         if (!present.has(cand)) {
           if (!purchasedSet.has(cand) || allowRepeats) {
             result.push({ number: cand, quantity: 0, value: 0 });
@@ -182,23 +250,122 @@ const fillSeriesWithRules = (seriesKey, initialArr, purchasedSet, usedWinners) =
   return result;
 };
 
+// ------------------ VALIDATE FINAL RESULT ------------------
+const validateFinalResult = (finalResult) => {
+  const errors = [];
+  
+  // Check total count
+  if (finalResult.length !== 30) {
+    errors.push(`Expected 30 numbers, got ${finalResult.length}`);
+  }
+  
+  // Check series distribution
+  const seriesCount = { "10": 0, "30": 0, "50": 0 };
+  const prefixesUsed = {
+    "10": new Set(), // Will track 10,11,12...19
+    "30": new Set(), // Will track 30,31,32...39  
+    "50": new Set()  // Will track 50,51,52...59
+  };
+  
+  finalResult.forEach(item => {
+    const series = getSeriesKeyFromNumber(item.number);
+    if (series && seriesCount[series] !== undefined) {
+      seriesCount[series]++;
+      // Track the specific prefix used
+      const prefix = Math.floor(Number(item.number) / 100);
+      prefixesUsed[series].add(prefix);
+    } else {
+      errors.push(`Invalid series for number: ${item.number}`);
+    }
+  });
+
+  // Check each series has exactly 10 numbers
+  Object.entries(seriesCount).forEach(([series, count]) => {
+    if (count !== 10) {
+      errors.push(`Series ${series} has ${count} numbers, expected 10`);
+    }
+  });
+
+  // Check that each series uses all 10 required prefixes
+  Object.entries(prefixesUsed).forEach(([series, prefixSet]) => {
+    const expectedPrefixes = series === "10" ? 10 : series === "30" ? 10 : 10;
+    if (prefixSet.size !== expectedPrefixes) {
+      errors.push(`Series ${series} has ${prefixSet.size} unique prefixes, expected ${expectedPrefixes}`);
+    }
+  });
+
+  // Validate number ranges
+  finalResult.forEach(item => {
+    const num = parseInt(item.number);
+    const firstTwo = Math.floor(num / 100);
+    
+    if (!(
+      (firstTwo >= 10 && firstTwo <= 19) ||
+      (firstTwo >= 30 && firstTwo <= 39) || 
+      (firstTwo >= 50 && firstTwo <= 59)
+    )) {
+      errors.push(`Number ${item.number} is outside valid series ranges`);
+    }
+  });
+
+  if (errors.length > 0) {
+    console.error("VALIDATION ERRORS:", errors);
+    throw new Error(`Result validation failed: ${errors.join(", ")}`);
+  }
+
+  console.log("✅ Final result validation passed");
+  return true;
+};
+
+// ------------------ RANDOM FULL RESULT (no tickets) -----------
 // ------------------ RANDOM FULL RESULT (no tickets) -----------
 const generateRandomFullResult = async (normalized, drawDate) => {
-  const randPrefix = (prefix) => {
-    const used = new Set();
-    const arr = [];
-    while (arr.length < 10) {
-      const r = Math.floor(Math.random() * 100).toString().padStart(2, "0");
-      const num = prefix + r;
-      if (!used.has(num)) {
-        used.add(num);
-        arr.push({ number: num, quantity: 0, value: 0 });
-      }
+  const generateSeriesNumbers = (seriesStart) => {
+    const numbers = [];
+    const prefixes = [];
+    
+    // Generate all required prefixes for this series
+    for (let i = 0; i < 10; i++) {
+      prefixes.push(seriesStart + i);
     }
-    return arr;
+    
+    // Shuffle prefixes to randomize order
+    for (let i = prefixes.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [prefixes[i], prefixes[j]] = [prefixes[j], prefixes[i]];
+    }
+    
+    // Generate one number for each prefix
+    for (let prefix of prefixes) {
+      let candidate;
+      let tries = 0;
+      const MAX_TRIES = 100;
+      
+      do {
+        const suffix = Math.floor(Math.random() * 100).toString().padStart(2, "0");
+        candidate = String(prefix).padStart(2, "0") + suffix;
+        tries++;
+      } while (numbers.some(n => n.number === candidate) && tries < MAX_TRIES);
+      
+      numbers.push({ 
+        number: candidate, 
+        quantity: 0, 
+        value: 0 
+      });
+    }
+    
+    return numbers;
   };
 
-  const finalResult = [...randPrefix("10"), ...randPrefix("30"), ...randPrefix("50")];
+  const finalResult = [
+    ...generateSeriesNumbers(10), // 10-19
+    ...generateSeriesNumbers(30), // 30-39
+    ...generateSeriesNumbers(50)  // 50-59
+  ];
+
+  // ✅ ADD VALIDATION HERE
+  console.log("🔍 Validating random full result...");
+  validateFinalResult(finalResult);
 
   await winningNumbers.create({
     loginId: 0,
@@ -211,7 +378,6 @@ const generateRandomFullResult = async (normalized, drawDate) => {
   console.log("🎲 RANDOM RESULT SAVED (no tickets found)");
   return finalResult;
 };
-
 // ------------------ CASE 5: LOGIN-ID PRIORITY --------------
 async function runCase5_LoginIdPriority({ priorityLoginIds, normalized, drawDate }) {
   console.log(`➡ CASE 5: PRIORITIZING loginIds = ${priorityLoginIds.join(", ")}`);
@@ -344,16 +510,21 @@ async function runCase5_LoginIdPriority({ priorityLoginIds, normalized, drawDate
   const final30 = fillSeriesWithRules("30", seriesBuckets["30"], purchasedSet, usedWinners);
   const final50 = fillSeriesWithRules("50", seriesBuckets["50"], purchasedSet, usedWinners);
 
-  const finalResult = [...final10, ...final30, ...final50].sort((a, b) => Number(a.number) - Number(b.number));
+const finalResult = [...final10, ...final30, ...final50].sort((a, b) => Number(a.number) - Number(b.number));
 
-  // Save result
-  await winningNumbers.create({
-    loginId: 0,
-    winningNumbers: finalResult,
-    totalPoints,
-    DrawTime: normalized,
-    drawDate,
-  });
+// ✅ STEP 5: ADD VALIDATION HERE
+console.log("🔍 Validating final result (Case 5)...");
+validateFinalResult(finalResult);
+// ✅ END OF VALIDATION
+
+// Save result
+await winningNumbers.create({
+  loginId: 0,
+  winningNumbers: finalResult,
+  totalPoints,
+  DrawTime: normalized,
+  drawDate,
+});
 
   console.log("🎉 CASE 5 RESULT SAVED (multi-priority)");
 
@@ -628,12 +799,16 @@ export const manualGenerateWinningNumbers = async (req, res) => {
     const final30 = fillSeriesWithRules("30", seriesBuckets["30"], purchasedSet, usedWinners);
     const final50 = fillSeriesWithRules("50", seriesBuckets["50"], purchasedSet, usedWinners);
 
-    let finalResult = [...final10, ...final30, ...final50];
+let finalResult = [...final10, ...final30, ...final50];
 
-    console.log("Final result to be saved:", finalResult);
+console.log("Final result to be saved:", finalResult);
 
-    // Sort final result numerically
-    finalResult = finalResult.sort((a, b) => Number(a.number) - Number(b.number));
+// Sort final result numerically
+finalResult = finalResult.sort((a, b) => Number(a.number) - Number(b.number));
+
+// ✅ STEP 5: ADD VALIDATION HERE
+console.log("🔍 Validating final result...");
+validateFinalResult(finalResult);
 
     // Save sorted final result
     await winningNumbers.create({
