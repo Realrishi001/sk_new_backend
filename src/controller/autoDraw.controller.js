@@ -273,6 +273,47 @@ const runCase5 = async ({ priorityLoginIds, filtered, normalized, drawDate }) =>
   return true;
 };
 
+// ----------------------------------------------------------
+// RANDOM FULL RESULT GENERATOR (No tickets case)
+// ----------------------------------------------------------
+const generateRandomFullResult = async (normalized, drawDate) => {
+  const randomSeries = (prefix) => {
+    const used = new Set();
+    const arr = [];
+    while (arr.length < 10) {
+      const suffix = Math.floor(Math.random() * 100).toString().padStart(2, "0");
+      const num = prefix + suffix;
+      if (!used.has(num)) {
+        used.add(num);
+        arr.push({
+          number: num,
+          quantity: 0,
+          value: 0
+        });
+      }
+    }
+    return arr;
+  };
+
+  const finalResult = [
+    ...randomSeries("10"),
+    ...randomSeries("30"),
+    ...randomSeries("50")
+  ];
+
+  await winningNumbers.create({
+    loginId: 0,
+    winningNumbers: finalResult,
+    totalPoints: 0,
+    DrawTime: normalized,
+    drawDate
+  });
+
+  console.log("🎲 RANDOM RESULT SAVED (no tickets)");
+  return finalResult;
+};
+
+
 /* ----------------------------------------------------------
    AUTO CONTROLLER MAIN
 ---------------------------------------------------------- */
