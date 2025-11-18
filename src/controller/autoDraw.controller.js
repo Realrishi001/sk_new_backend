@@ -320,23 +320,15 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
       }
     });
 
-    if (!filtered.length) {
-      console.log("⚠ No tickets → random result");
+if (!filtered.length) {
+  console.log("⚠ No tickets → random result");
 
-      const final =
-        [...randomSeriesFill("10"), ...randomSeriesFill("30"), ...randomSeriesFill("50")];
+  const final = await generateRandomFullResult(normalized, drawDate);
 
-      await winningNumbers.create({
-        loginId: 0,
-        winningNumbers: final,
-        totalPoints: 0,
-        DrawTime: normalized,
-        drawDate,
-      });
+  console.log("🎉 RANDOM AUTO RESULT SAVED");
+  return true;
+}
 
-      console.log("🎉 RANDOM AUTO RESULT SAVED");
-      return true;
-    }
 
     // if priority admins exist → run case-5
     if (priorityLoginIds.length > 0) {
