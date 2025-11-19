@@ -488,86 +488,87 @@ await winningNumbers.create({
   return { finalResult, caseUsed: 5, totalPoints };
 }
 
-// ------------------ AUTO GENERATE WINNING NUMBERS ----------------------
+
 export const autoGenerateWinningNumbers = async (drawTime) => {
   try {
+    if (!drawTime) {
+      console.log("⛔ autoGenerateWinningNumbers called without drawTime");
+      return false;
+    }
+
     const normalized = formatDrawTime(drawTime);
-    const drawDate = new Date().toISOString().split("T")[0];
+    const drawDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
 
-    console.log("⏳ Auto Draw Triggered →", normalized);
+    console.log("⏳ Auto Draw Triggered →", normalized, " DrawDate:", drawDate);
 
-    // Check if result already exists
+    // 0) Duplicate check — do this early to avoid double work
     const exists = await winningNumbers.findOne({
       where: { DrawTime: normalized, drawDate },
     });
 
     if (exists) {
-      console.log("⛔ Result already exists");
+      console.log("⛔ AUTO: Result already exists for", normalized, drawDate);
       return false;
     }
 
-    // Fetch priority admins
+    // 1) Check DB for priority admins (same logic as manual)
     const priorityAdmins = await Admin.findAll({
       where: { priorWinning: true },
       attributes: ["id"],
       order: [["id", "DESC"]],
     });
-
     const priorityLoginIds = priorityAdmins.map((a) => String(a.id));
 
-    // Fetch today's tickets
+    // 2) Get all today's tickets (restrict createdAt to today's window)
     const start = new Date(); start.setHours(0, 0, 0, 0);
-    const end = new Date(); end.setHours(23, 59, 59, 999);
+    const end = new Date();   end.setHours(23, 59, 59, 999);
 
     const allTickets = await tickets.findAll({
       where: { createdAt: { [Op.between]: [start, end] } },
       attributes: ["id", "ticketNumber", "totalPoints", "totalQuatity", "loginId", "drawTime"],
     });
 
-    // Filter by draw time
+    // 3) Filter tickets for this draw time (normalize stored drawTime)
     const filtered = allTickets.filter((t) => {
       try {
         const times = Array.isArray(t.drawTime) ? t.drawTime : JSON.parse(t.drawTime);
         return times.map((x) => formatDrawTime(x)).includes(normalized);
-      } catch {
+      } catch (err) {
         return false;
       }
     });
 
-    console.log(`Filtered tickets for ${normalized}: ${filtered.length}`);
+    console.log(`AUTO: Tickets matching ${normalized}: ${filtered.length}`);
 
-    // If no tickets, save random result
+    // 4) If no tickets → save a random full result (same as manual)
     if (!filtered.length) {
-      console.log("⚠ No tickets found → saving random result");
-      const rr = await generateRandomFullResult(normalized, drawDate);
+      console.log("AUTO: No tickets found for this slot → saving random full result");
+      await generateRandomFullResult(normalized, drawDate);
       return true;
     }
 
-    // If priority admins present, run Case 5
+    // 5) If there are priority admins, run CASE 5 (same logic as manual)
     if (priorityLoginIds.length > 0) {
-      console.log(`Auto CASE 5 triggered by DB priority admins: ${priorityLoginIds.join(", ")}`);
-      const out = await runCase5_LoginIdPriority({ priorityLoginIds, normalized, drawDate });
+      console.log("AUTO: Priority admins detected → running CASE 5:", priorityLoginIds.join(", "));
+      await runCase5_LoginIdPriority({ priorityLoginIds, normalized, drawDate });
       return true;
     }
 
-    // Otherwise choose random case 1..4
+    // 6) Otherwise run a "random" CASE 1..4 — but implement selection the same as manual
     const totalCases = 4;
     const win_case = Math.floor(Math.random() * totalCases) + 1;
-    console.log(`🎲 AUTO Using CASE ${win_case} for winner selection`);
+    console.log(`AUTO: Using CASE ${win_case}`);
 
-    // Total Points
+    // 7) Compute totals, totalPoints, and winning capacity
     const totalPoints = filtered.reduce((sum, t) => sum + Number(t.totalPoints || 0), 0);
-    console.log(`Total points calculated: ${totalPoints}`);
-
-    // Winning pool and capacity
     const latest = await winningPercentage.findOne({ order: [["createdAt", "DESC"]] });
     const winningPercent = latest ? Number(latest.percentage) : 0;
     const winningPool = Math.floor((totalPoints * winningPercent) / 100);
     let qtyCapacity = Math.floor(winningPool / POINTS_PER_QUANTITY);
 
-    console.log(`Winning Pool: ${winningPool}, Quantity Capacity: ${qtyCapacity}`);
+    console.log(`AUTO: totalPoints=${totalPoints}, winningPercent=${winningPercent}, winningPool=${winningPool}, qtyCapacity=${qtyCapacity}`);
 
-    // Build aggregated totals from all tickets
+    // Aggregate purchases map: number -> total qty purchased
     const totals = {};
     for (let t of filtered) {
       const parsed = parseTicketNumberToMap(t.ticketNumber);
@@ -576,53 +577,40 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
       }
     }
 
-    // Sort aggregated numbers by quantity desc (Case 1 base)
+    // Build helpers for selection
     const sortedByQty = Object.entries(totals)
       .map(([number, qty]) => ({ number, qty }))
-      .sort((a, b) => b.qty - a.qty);
+      .sort((a, b) => b.qty - a.qty); // descending qty
 
-    // Prepare purchase-power sorted tickets
     const sortedByPurchasePower = [...filtered].sort((a, b) => Number(b.totalQuatity) - Number(a.totalQuatity));
 
-    // Winner selection
     let winners = [];
 
-    // CASE 1: quantity-based aggregated
+    // CASE 1: aggregated top quantities
     if (win_case === 1) {
-      console.log("➡ CASE 1: Standard quantity-based selection");
+      console.log("AUTO CASE1: quantity-based aggregated selection");
       if (qtyCapacity > 0) {
         for (let item of sortedByQty) {
-          if (item.qty <= qtyCapacity) {
-            if (!winners.some((w) => w.number === item.number)) {
-              winners.push({
-                number: item.number,
-                quantity: item.qty,
-                value: item.qty * POINTS_PER_QUANTITY,
-              });
-              qtyCapacity -= item.qty;
-            }
+          if (item.qty <= qtyCapacity && !winners.some(w => w.number === item.number)) {
+            winners.push({ number: item.number, quantity: item.qty, value: item.qty * POINTS_PER_QUANTITY });
+            qtyCapacity -= item.qty;
           }
           if (qtyCapacity <= 0) break;
         }
       }
     }
 
-    // CASE 2: Highest purchaser
+    // CASE 2: highest purchaser (by totalQuatity desc)
     if (win_case === 2) {
-      console.log("➡ CASE 2: Highest purchaser priority");
+      console.log("AUTO CASE2: highest purchaser priority");
       for (let ticketRow of sortedByPurchasePower) {
         const ticketArray = parseTicketNumberToArray(ticketRow.ticketNumber);
         for (let entry of ticketArray) {
           const num = String(entry.ticketNumber);
           const qty = Number(entry.quantity || 0);
-
-          if (qty > 0 && qty <= qtyCapacity && !winners.some((w) => w.number === num)) {
-            winners.push({
-              number: num,
-              quantity: qty,
-              value: qty * POINTS_PER_QUANTITY,
-              fromTicketId: ticketRow.id,
-            });
+          if (winners.some(w => w.number === num)) continue;
+          if (qty > 0 && qty <= qtyCapacity) {
+            winners.push({ number: num, quantity: qty, value: qty * POINTS_PER_QUANTITY, fromTicketId: ticketRow.id });
             qtyCapacity -= qty;
           }
           if (qtyCapacity <= 0) break;
@@ -631,23 +619,18 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
       }
     }
 
-    // CASE 3: Lowest purchaser
+    // CASE 3: lowest purchaser (by totalQuatity asc)
     if (win_case === 3) {
-      console.log("➡ CASE 3: Lowest purchaser priority");
-      const sortedByPurchaseAsc = [...sortedByPurchasePower].reverse();
+      console.log("AUTO CASE3: lowest purchaser priority");
+      const sortedByPurchaseAsc = [...sortedByPurchasePower].slice().reverse();
       for (let ticketRow of sortedByPurchaseAsc) {
         const ticketArray = parseTicketNumberToArray(ticketRow.ticketNumber);
         for (let entry of ticketArray) {
           const num = String(entry.ticketNumber);
           const qty = Number(entry.quantity || 0);
-
-          if (qty > 0 && qty <= qtyCapacity && !winners.some((w) => w.number === num)) {
-            winners.push({
-              number: num,
-              quantity: qty,
-              value: qty * POINTS_PER_QUANTITY,
-              fromTicketId: ticketRow.id,
-            });
+          if (winners.some(w => w.number === num)) continue;
+          if (qty > 0 && qty <= qtyCapacity) {
+            winners.push({ number: num, quantity: qty, value: qty * POINTS_PER_QUANTITY, fromTicketId: ticketRow.id });
             qtyCapacity -= qty;
           }
           if (qtyCapacity <= 0) break;
@@ -656,38 +639,69 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
       }
     }
 
-    // CASE 4: Fully random
+    // CASE 4: lowest winning 30%-40% mode (pick many low-qty numbers)
     if (win_case === 4) {
-      console.log("➡ CASE 4: Fully random");
-      winners = [];
+      console.log("AUTO CASE4: lowest winning (30%-40%) mode");
+      const sortedByQtyAsc = [...sortedByQty].sort((a, b) => a.qty - b.qty);
+      const minTargetQty = Math.floor((winningPool * 0.30) / POINTS_PER_QUANTITY);
+      const maxTargetQty = Math.floor((winningPool * 0.40) / POINTS_PER_QUANTITY);
+
+      // helper same as in manual (selectLowestWinners)
+      const selectLowestWinnersLocal = (sortedAsc, targetQty) => {
+        const picked = [];
+        let remaining = targetQty;
+        const usedSet = new Set();
+        for (let it of sortedAsc) {
+          if (it.qty <= remaining && !usedSet.has(it.number)) {
+            picked.push({ number: it.number, quantity: it.qty, value: it.qty * POINTS_PER_QUANTITY });
+            usedSet.add(it.number);
+            remaining -= it.qty;
+          }
+          if (remaining <= 0) break;
+        }
+        return picked;
+      };
+
+      winners = selectLowestWinnersLocal(sortedByQtyAsc, minTargetQty);
+      let usedQty = winners.reduce((s, w) => s + w.quantity, 0);
+
+      if (usedQty < minTargetQty) {
+        // not possible -> expand to 40%
+        winners = selectLowestWinnersLocal(sortedByQtyAsc, maxTargetQty);
+      }
     }
 
-    // Series fill with validation
-    const usedWinners = new Set(winners.map((w) => String(w.number)));
+    // If still no winners (edge cases), pick the top smallest available single number as a fallback
+    if (winners.length === 0) {
+      const fallback = sortedByQty[sortedByQty.length - 1];
+      if (fallback) {
+        winners.push({ number: fallback.number, quantity: fallback.qty, value: fallback.qty * POINTS_PER_QUANTITY });
+      }
+    }
+
+    // Series fill (use the exact same fillSeriesWithRules logic as manual)
+    const usedWinners = new Set(winners.map(w => String(w.number)));
     const purchasedSet = new Set(Object.keys(totals));
     const seriesBuckets = { "10": [], "30": [], "50": [] };
 
-    winners.forEach((w) => {
-      const key = getSeriesKeyFromNumber(String(w.number));
-      if (key) seriesBuckets[key].push({
-        number: String(w.number),
-        quantity: Number(w.quantity || 0),
-        value: Number(w.value || 0),
-      });
+    winners.forEach(w => {
+      const k = getSeriesKeyFromNumber(String(w.number));
+      if (k) seriesBuckets[k].push({ number: String(w.number), quantity: Number(w.quantity || 0), value: Number(w.value || 0) });
     });
 
     const final10 = fillSeriesWithRules("10", seriesBuckets["10"], purchasedSet, usedWinners);
     const final30 = fillSeriesWithRules("30", seriesBuckets["30"], purchasedSet, usedWinners);
     const final50 = fillSeriesWithRules("50", seriesBuckets["50"], purchasedSet, usedWinners);
 
+    // Combine and sort numerically like manual
     let finalResult = [...final10, ...final30, ...final50];
     finalResult = finalResult.sort((a, b) => Number(a.number) - Number(b.number));
 
-    // ✅ VALIDATION FOR AUTO
-    console.log("🔍 Validating auto final result...");
+    // Validation (same as manual)
+    console.log("AUTO: Validating final result...");
     validateFinalResult(finalResult);
 
-    // Save result
+    // Save
     await winningNumbers.create({
       loginId: 0,
       winningNumbers: finalResult,
@@ -696,256 +710,11 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
       drawDate,
     });
 
-    console.log(`🎉 AUTO RESULT SAVED (Case ${win_case})`);
+    console.log(`🎉 AUTO saved result for ${normalized} (case ${win_case})`);
     return true;
-
   } catch (err) {
     console.error("❌ AUTO DRAW ERROR:", err);
     return false;
   }
 };
 
-// ------------------ MANUAL CONTROLLER ----------------------
-export const manualGenerateWinningNumbers = async (req, res) => {
-  try {
-    const { drawTime, drawDate, loginId } = req.body;
-
-    if (!drawTime || !drawDate)
-      return res.status(400).json({ message: "Both drawTime and drawDate are required." });
-
-    const normalized = formatDrawTime(drawTime);
-    console.log(`Formatted Draw Time: ${normalized}`);
-
-    // ---------- DUPLICATE CHECK ----------
-    const already = await winningNumbers.findOne({ where: { DrawTime: normalized, drawDate } });
-    if (already) {
-      console.log(`Result already exists for ${normalized}`);
-      return res.status(400).json({ message: `Result already exists for ${normalized}` });
-    }
-
-    // If loginId provided → run case 5 (manual override)
-    if (loginId) {
-      const out = await runCase5_LoginIdPriority({ priorityLoginIds: [String(loginId)], normalized, drawDate });
-      return res.status(200).json({
-        message: "Winning numbers saved (Login-ID Priority manual)",
-        winning: out.finalResult,
-        caseUsed: out.caseUsed,
-      });
-    }
-
-    // AUTO / SCHEDULED: check DB Admin.priorWinning for priority users
-    const priorityAdmins = await Admin.findAll({
-      where: { priorWinning: true },
-      attributes: ["id"],
-      order: [["id", "DESC"]],
-    });
-
-    const priorityLoginIds = priorityAdmins.map((a) => String(a.id));
-
-    // if any priority admins present, run Case-5
-    if (priorityLoginIds.length > 0) {
-      console.log(`Auto CASE 5 triggered by DB priority admins: ${priorityLoginIds.join(", ")}`);
-      const out = await runCase5_LoginIdPriority({ priorityLoginIds, normalized, drawDate });
-      return res.status(200).json({
-        message: "Winning numbers saved (Login-ID Priority from DB)",
-        winning: out.finalResult,
-        caseUsed: out.caseUsed,
-      });
-    }
-
-    // Otherwise choose random case 1..4
-    const totalCases = 4;
-    const win_case = Math.floor(Math.random() * totalCases) + 1;
-    console.log(`🎲 Using CASE ${win_case} for winner selection`);
-
-    // Fetch today's tickets
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date();
-    end.setHours(23, 59, 59, 999);
-
-    const allTickets = await tickets.findAll({
-      where: { createdAt: { [Op.between]: [start, end] } },
-      attributes: ["id", "ticketNumber", "totalPoints", "totalQuatity", "drawTime"],
-    });
-
-    console.log(`Total tickets fetched: ${allTickets.length}`);
-
-    // Filter by draw time
-    const filtered = allTickets.filter((t) => {
-      try {
-        const times = Array.isArray(t.drawTime) ? t.drawTime : JSON.parse(t.drawTime);
-        return times.map((x) => formatDrawTime(x)).includes(normalized);
-      } catch (err) {
-        console.log("Error filtering ticket:", err);
-        return false;
-      }
-    });
-
-    console.log(`Filtered tickets for ${normalized}: ${filtered.length}`);
-
-    if (!filtered.length) {
-      // If no tickets, save random full series
-      const rr = await generateRandomFullResult(normalized, drawDate);
-      return res.status(200).json({
-        message: "Random result saved (no tickets found)",
-        winning: rr,
-        caseUsed: "random",
-      });
-    }
-
-    // Total Points
-    const totalPoints = filtered.reduce((sum, t) => sum + Number(t.totalPoints || 0), 0);
-    console.log(`Total points calculated: ${totalPoints}`);
-
-    // Winning pool and capacity
-    const latest = await winningPercentage.findOne({ order: [["createdAt", "DESC"]] });
-    const winningPercent = latest ? Number(latest.percentage) : 0;
-    const winningPool = Math.floor((totalPoints * winningPercent) / 100);
-    let qtyCapacity = Math.floor(winningPool / POINTS_PER_QUANTITY);
-
-    console.log(`Winning Pool: ${winningPool}, Quantity Capacity: ${qtyCapacity}`);
-
-    // Build aggregated totals from all tickets
-    const totals = {};
-    for (let t of filtered) {
-      const parsed = parseTicketNumberToMap(t.ticketNumber);
-      for (let [num, qty] of Object.entries(parsed)) {
-        totals[num] = (totals[num] || 0) + qty;
-      }
-    }
-
-    // Sort aggregated numbers by quantity desc
-    const sortedByQty = Object.entries(totals)
-      .map(([number, qty]) => ({ number, qty }))
-      .sort((a, b) => b.qty - a.qty);
-
-    // Prepare purchase-power sorted tickets
-    const sortedByPurchasePower = [...filtered].sort((a, b) => Number(b.totalQuatity) - Number(a.totalQuatity));
-
-    // Winner selection
-    let winners = [];
-
-    // CASE 1: quantity-based aggregated
-    if (win_case === 1) {
-      console.log("➡ CASE 1: Standard quantity-based selection");
-      if (qtyCapacity > 0) {
-        for (let item of sortedByQty) {
-          if (item.qty <= qtyCapacity) {
-            if (!winners.some((w) => w.number === item.number)) {
-              winners.push({
-                number: item.number,
-                quantity: item.qty,
-                value: item.qty * POINTS_PER_QUANTITY,
-              });
-              qtyCapacity -= item.qty;
-            }
-          }
-          if (qtyCapacity <= 0) break;
-        }
-      }
-    }
-
-    // CASE 2: Highest purchaser
-    if (win_case === 2) {
-      console.log("➡ CASE 2: Highest purchaser priority");
-      for (let ticketRow of sortedByPurchasePower) {
-        const ticketArray = parseTicketNumberToArray(ticketRow.ticketNumber);
-        for (let entry of ticketArray) {
-          const num = String(entry.ticketNumber);
-          const qty = Number(entry.quantity || 0);
-
-          if (winners.some((w) => w.number === num)) continue;
-
-          if (qty > 0 && qty <= qtyCapacity) {
-            winners.push({
-              number: num,
-              quantity: qty,
-              value: qty * POINTS_PER_QUANTITY,
-              fromTicketId: ticketRow.id,
-            });
-            qtyCapacity -= qty;
-          }
-          if (qtyCapacity <= 0) break;
-        }
-        if (qtyCapacity <= 0) break;
-      }
-    }
-
-    // CASE 3: Lowest purchaser
-    if (win_case === 3) {
-      console.log("➡ CASE 3: Lowest purchaser priority");
-      const sortedByPurchaseAsc = [...sortedByPurchasePower].reverse();
-      for (let ticketRow of sortedByPurchaseAsc) {
-        const ticketArray = parseTicketNumberToArray(ticketRow.ticketNumber);
-        for (let entry of ticketArray) {
-          const num = String(entry.ticketNumber);
-          const qty = Number(entry.quantity || 0);
-
-          if (winners.some((w) => w.number === num)) continue;
-
-          if (qty > 0 && qty <= qtyCapacity) {
-            winners.push({
-              number: num,
-              quantity: qty,
-              value: qty * POINTS_PER_QUANTITY,
-              fromTicketId: ticketRow.id,
-            });
-            qtyCapacity -= qty;
-          }
-          if (qtyCapacity <= 0) break;
-        }
-        if (qtyCapacity <= 0) break;
-      }
-    }
-
-    // CASE 4: Fully random
-    if (win_case === 4) {
-      console.log("➡ CASE 4: Fully random");
-      winners = [];
-    }
-
-    // Series fill with validation
-    const usedWinners = new Set(winners.map((w) => String(w.number)));
-    const purchasedSet = new Set(Object.keys(totals));
-    const seriesBuckets = { "10": [], "30": [], "50": [] };
-
-    winners.forEach((w) => {
-      const key = getSeriesKeyFromNumber(String(w.number));
-      if (key) seriesBuckets[key].push({
-        number: String(w.number),
-        quantity: Number(w.quantity || 0),
-        value: Number(w.value || 0),
-      });
-    });
-
-    const final10 = fillSeriesWithRules("10", seriesBuckets["10"], purchasedSet, usedWinners);
-    const final30 = fillSeriesWithRules("30", seriesBuckets["30"], purchasedSet, usedWinners);
-    const final50 = fillSeriesWithRules("50", seriesBuckets["50"], purchasedSet, usedWinners);
-
-    let finalResult = [...final10, ...final30, ...final50];
-    finalResult = finalResult.sort((a, b) => Number(a.number) - Number(b.number));
-
-    // ✅ VALIDATION FOR MANUAL
-    console.log("🔍 Validating manual final result...");
-    validateFinalResult(finalResult);
-
-    // Save result
-    await winningNumbers.create({
-      loginId: 0,
-      winningNumbers: finalResult,
-      totalPoints,
-      DrawTime: normalized,
-      drawDate,
-    });
-
-    return res.status(200).json({
-      message: "Winning numbers successfully saved.",
-      winning: finalResult,
-      caseUsed: win_case,
-    });
-  } catch (err) {
-    console.error("❌ Auto Draw Error:", err);
-    return res.status(500).json({ message: "Server error occurred while triggering the draw." });
-  }
-};
