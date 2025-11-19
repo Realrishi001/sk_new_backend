@@ -226,25 +226,42 @@ export const getPrintedTickets = async (req, res) => {
       return res.status(200).json({ message: "No tickets found for today", data: [] });
     }
 
-    const result = todaysTickets.map((t) => {
-      let gameDate = "";
-      let gameTime = "";
-      if (typeof t.gameTime === "string") {
-        const [date, ...timeParts] = t.gameTime.split(" ");
-        gameDate = date || "";
-        gameTime = timeParts.join(" ") || "";
-      }
+    
 
-      return {
-        ticketNo: t.id,
-        gameDate,
-        gameTime,
-        drawTime: t.drawTime,
-        ticketNumber: t.ticketNumber,
-        totalPoints: t.totalPoints,
-        totalQuatity: t.totalQuatity,
-      };
-    });
+const result = todaysTickets.map((t) => {
+  let gameDate = "";
+  let gameTime = "";
+
+  if (typeof t.gameTime === "string") {
+    const [date, ...timeParts] = t.gameTime.split(" ");
+    gameDate = date || "";
+    gameTime = timeParts.join(" ") || "";
+  }
+
+  // ⭐ FIX: Ensure ticketNumber is always JSON array
+  let parsedTicketNumbers = [];
+
+  if (Array.isArray(t.ticketNumber)) {
+    parsedTicketNumbers = t.ticketNumber;
+  } else if (typeof t.ticketNumber === "string") {
+    try {
+      parsedTicketNumbers = JSON.parse(t.ticketNumber);
+    } catch {
+      parsedTicketNumbers = [];
+    }
+  }
+
+  return {
+    ticketNo: t.id,
+    gameDate,
+    gameTime,
+    drawTime: t.drawTime,
+    ticketNumber: parsedTicketNumbers,
+    totalPoints: t.totalPoints,
+    totalQuatity: t.totalQuatity,
+  };
+});
+
 
     console.log(`✅ Found ${result.length} tickets for admin ${loginId} (IST Date: ${today}).`);
 

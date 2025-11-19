@@ -173,16 +173,21 @@ export const getNavbarDetails = async (req, res) => {
 
 export const getWinningNumbersByLoginId = async (req, res) => {
   try {
-    // Get today's date (YYYY-MM-DD)
-    const today = new Date().toISOString().split("T")[0];
+    // Accept date from query or body
+    let inputDate = req.query.date || req.body?.date || null;
 
-    console.log(`📅 Fetching winning numbers for: ${today}`);
+    // If no date sent → use today's IST date
+    if (!inputDate) {
+      const now = new Date();
+      const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+      inputDate = ist.toISOString().split("T")[0];
+    }
 
-    // Fetch all winning numbers for today's date (no loginId filter)
+    console.log(`📅 Fetching winning numbers for: ${inputDate}`);
+
+    // Fetch records for selected date
     const records = await winningNumbers.findAll({
-      where: {
-        drawDate: today,
-      },
+      where: { drawDate: inputDate },
       attributes: ["winningNumbers", "DrawTime", "drawDate", "loginId"],
       order: [
         ["drawDate", "DESC"],
@@ -191,25 +196,49 @@ export const getWinningNumbersByLoginId = async (req, res) => {
     });
 
     if (!records.length) {
-      console.warn("⚠️ No winning numbers found for today.");
       return res.status(200).json({
-        message: "No winning numbers found for today.",
+        message: `No winning numbers found for ${inputDate}.`,
         count: 0,
         results: [],
       });
     }
 
-    console.log(`✅ Found ${records.length} winning records for today.`);
+    // Normalize and clean results before sending
+    const cleanedResults = records.map((rec) => {
+      let numbers = rec.winningNumbers;
+
+      // Parse JSON safely
+      if (typeof numbers === "string") {
+        try {
+          numbers = JSON.parse(numbers);
+        } catch {
+          numbers = [];
+        }
+      }
+
+      // Clean DrawTime → remove quotes, ensure trimmed
+      let drawTime = rec.DrawTime;
+      if (typeof drawTime === "string") {
+        drawTime = drawTime.replace(/['"]+/g, "").trim();
+      }
+
+      return {
+        drawDate: rec.drawDate,
+        DrawTime: drawTime,
+        winningNumbers: numbers,
+      };
+    });
 
     return res.status(200).json({
-      message: "Today's winning numbers fetched successfully.",
-      count: records.length,
-      results: records,
+      message: `Winning numbers fetched for ${inputDate}.`,
+      count: cleanedResults.length,
+      results: cleanedResults,
     });
+
   } catch (err) {
-    console.error("🔥 Error fetching today's winning numbers:", err);
+    console.error("🔥 Error fetching winning numbers:", err);
     return res.status(500).json({
-      message: "Server error while fetching today's winning numbers.",
+      message: "Server error while fetching winning numbers.",
       error: err.message,
     });
   }

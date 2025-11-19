@@ -4,6 +4,7 @@ import { claimedTickets } from "../models/claimedTickets.model.js";
 import dayjs from "dayjs";
 import Admin from "../models/admins.model.js";
 import { sequelizeCon } from "../init/dbConnection.js";
+import { Op } from "sequelize";
 
 /* ------------------------- HELPER FUNCTIONS ------------------------- */
 
@@ -588,15 +589,17 @@ export const getClaimedTickets = async (req, res) => {
         }
       }
 
-      // Clean the ticketNumbers array (parse and clean them if needed)
-      const cleanedTicketNumbers = ticketNumbersArr.map((ticket) => {
-        // Ensure each ticket number and quantity is correctly parsed and formatted
-        const { ticketNumber, quantity } = ticket;
-        return {
-          ticketNumber: ticketNumber.replace(/[^0-9]/g, ""), // Keep only numeric values in ticket number
-          quantity: quantity || 0,  // Default to 0 if quantity is missing
-        };
-      });
+const cleanedTicketNumbers = (Array.isArray(ticketNumbersArr) ? ticketNumbersArr : []).map((ticket) => {
+  const rawNum = ticket?.number ? String(ticket.number) : "";
+  const rawQty = Number(ticket?.quantity || 0);
+
+  return {
+    ticketNumber: rawNum.replace(/[^0-9]/g, ""),
+    quantity: rawQty,
+  };
+});
+
+
 
       const admin = adminMap[row.loginId] || {
         shopName: "Unknown",

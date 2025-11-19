@@ -30,28 +30,36 @@ export const getTicketSummary = async (req, res) => {
       let total30SeriesPoints = 0;
       let total50SeriesPoints = 0;
 
-      const ticketData =
-        typeof ticket.ticketNumber === "string"
-          ? ticket.ticketNumber
-          : JSON.stringify(ticket.ticketNumber);
+let ticketArray = [];
 
-      const pairs = ticketData.split(",");
-      pairs.forEach((pair) => {
-        const [key, value] = pair.split(":").map((v) => v.trim());
-        const baseNumber = parseInt(key.split("-")[0], 10);
-        const points = parseFloat(value || 0);
+if (Array.isArray(ticket.ticketNumber)) {
+  ticketArray = ticket.ticketNumber;
+} else if (typeof ticket.ticketNumber === "string") {
+  try {
+    ticketArray = JSON.parse(ticket.ticketNumber);
+  } catch {
+    ticketArray = [];
+  }
+}
 
-        if (baseNumber >= 10 && baseNumber <= 19) {
-          total10SeriesCount += 1;
-          total10SeriesPoints += points;
-        } else if (baseNumber >= 30 && baseNumber <= 39) {
-          total30SeriesCount += 1;
-          total30SeriesPoints += points;
-        } else if (baseNumber >= 50 && baseNumber <= 59) {
-          total50SeriesCount += 1;
-          total50SeriesPoints += points;
-        }
-      });
+ticketArray.forEach(item => {
+  const ticketNum = item.ticketNumber;
+  const qty = Number(item.quantity || 0);
+
+  const baseNumber = parseInt(ticketNum.substring(0, 2), 10);
+
+if (baseNumber >= 10 && baseNumber <= 19) {
+  total10SeriesCount += qty;
+  total10SeriesPoints += qty * 10;
+} else if (baseNumber >= 30 && baseNumber <= 39) {
+  total30SeriesCount += qty;
+  total30SeriesPoints += qty * 30;
+} else if (baseNumber >= 50 && baseNumber <= 59) {
+  total50SeriesCount += qty;
+  total50SeriesPoints += qty * 50;
+}
+});
+
 
       const totalPoints = parseFloat(ticket.totalPoints || 0);
 
@@ -147,22 +155,35 @@ export const getTicketsBySeries = async (req, res) => {
       return [];
     };
 
-    const parseTicketNumber = (raw) => {
-      if (!raw) return {};
-      if (typeof raw === "object" && !Array.isArray(raw)) return raw;
-      if (typeof raw === "string") {
-        try {
-          const maybeObj = JSON.parse(raw);
-          if (maybeObj && typeof maybeObj === "object" && !Array.isArray(maybeObj)) return maybeObj;
-        } catch { }
-        return raw.split(",").reduce((acc, entry) => {
-          const [k, v] = entry.split(":").map((s) => s.trim());
-          if (k && v) acc[k] = Number(v);
-          return acc;
-        }, {});
+const parseTicketNumber = (raw) => {
+  if (!raw) return {};
+
+  // If already array → convert into object
+  if (Array.isArray(raw)) {
+    const out = {};
+    raw.forEach(item => {
+      out[item.ticketNumber] = Number(item.quantity || 0);
+    });
+    return out;
+  }
+
+  // If JSON string containing array → parse it
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const out = {};
+        parsed.forEach(item => {
+          out[item.ticketNumber] = Number(item.quantity || 0);
+        });
+        return out;
       }
-      return {};
-    };
+    } catch {}
+  }
+
+  return {};
+};
+
 
     const result = rows.map((t) => {
       const tnObj = parseTicketNumber(t.ticketNumber);
@@ -173,8 +194,11 @@ export const getTicketsBySeries = async (req, res) => {
 
       for (const [ticketNum, qtyRaw] of Object.entries(tnObj)) {
         const qty = Number(qtyRaw) || 0;
-        const base = parseInt(String(ticketNum).split("-")[0], 10);
-        const item = { ticketNumber: String(ticketNum).replace("-", ""), quantity: qty };
+        const cleanNum = String(ticketNum).replace("-", "");
+        const base = parseInt(cleanNum.substring(0, 2), 10);
+
+        const item = { ticketNumber: cleanNum, quantity: qty };
+
 
         if (base >= 10 && base <= 19) series10.push(item);
         else if (base >= 30 && base <= 39) series30.push(item);
@@ -228,22 +252,34 @@ export const getTicketsBySeriesWithShop = async (req, res) => {
     });
 
     // 🧩 Parse ticketNumber safely
-    const parseTicketNumber = (raw) => {
-      if (!raw) return {};
-      if (typeof raw === "object" && !Array.isArray(raw)) return raw;
-      if (typeof raw === "string") {
-        try {
-          const obj = JSON.parse(raw);
-          if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj;
-        } catch {}
-        return raw.split(",").reduce((acc, entry) => {
-          const [k, v] = entry.split(":").map((s) => s.trim());
-          if (k && v) acc[k] = Number(v);
-          return acc;
-        }, {});
+const parseTicketNumber = (raw) => {
+  if (!raw) return {};
+
+  // If already array → convert into object
+  if (Array.isArray(raw)) {
+    const out = {};
+    raw.forEach(item => {
+      out[item.ticketNumber] = Number(item.quantity || 0);
+    });
+    return out;
+  }
+
+  // If JSON string containing array → parse it
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const out = {};
+        parsed.forEach(item => {
+          out[item.ticketNumber] = Number(item.quantity || 0);
+        });
+        return out;
       }
-      return {};
-    };
+    } catch {}
+  }
+
+  return {};
+};
 
     // 🧩 Ensure drawTime is always an array
     const toTimeArray = (val) => {
@@ -294,8 +330,8 @@ export const getTicketsBySeriesWithShop = async (req, res) => {
         // 🔢 Sort ticket numbers into correct series buckets
         for (const [ticketNum, qtyRaw] of Object.entries(parsedTickets)) {
           const qty = Number(qtyRaw) || 0;
-          const base = parseInt(String(ticketNum).split("-")[0], 10);
           const cleanNum = String(ticketNum).replace("-", "");
+          const base = parseInt(cleanNum.substring(0, 2), 10);
           const draw = adminGroups[adminId].draws[timeSlot];
 
           if (base >= 10 && base <= 19)
