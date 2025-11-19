@@ -508,15 +508,21 @@ async function runCase5_LoginIdPriority({ priorityLoginIds, normalized, drawDate
   const final30 = fillSeriesWithRules("30", seriesBuckets["30"], purchasedSet, usedWinners);
   const final50 = fillSeriesWithRules("50", seriesBuckets["50"], purchasedSet, usedWinners);
 
-  const finalResult = [...final10, ...final30, ...final50].sort((a, b) => Number(a.number) - Number(b.number));
-  validateFinalResult(finalResult);
+// SAFETY TRIM: ensure no series exceeds 10 and final <= 30
+final10 = final10.slice(0, 10);
+final30 = final30.slice(0, 10);
+final50 = final50.slice(0, 10);
 
+let finalResult = [...final10, ...final30, ...final50];
+// final safety — if anything slipped through, limit to 30
+finalResult = finalResult.slice(0, 30);
 
-// ✅ STEP 5: ADD VALIDATION HERE
-    console.log("🔍 Validating final result (Case 5)...");
-    validateFinalResult(finalResult);
+// numeric sort (same as before)
+finalResult = finalResult.sort((a, b) => Number(a.number) - Number(b.number));
 
-// Save result
+// validate and save
+validateFinalResult(finalResult);
+
 await winningNumbers.create({
   loginId: 0,
   winningNumbers: finalResult,
@@ -524,6 +530,7 @@ await winningNumbers.create({
   DrawTime: normalized,
   drawDate,
 });
+
 
   console.log("🎉 CASE 5 RESULT SAVED (multi-priority)");
 
@@ -736,21 +743,36 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
     const final50 = fillSeriesWithRules("50", seriesBuckets["50"], purchasedSet, usedWinners);
 
     // Combine and sort numerically like manual
-    let finalResult = [...final10, ...final30, ...final50];
-    finalResult = finalResult.sort((a, b) => Number(a.number) - Number(b.number));
+// SAFETY TRIM: ensure no series exceeds 10 and final <= 30
+final10 = final10.slice(0, 10);
+final30 = final30.slice(0, 10);
+final50 = final50.slice(0, 10);
 
-    // Validation (same as manual)
-    console.log("AUTO: Validating final result...");
-    validateFinalResult(finalResult);
+let finalResult = [...final10, ...final30, ...final50];
+// final safety — if anything slipped through, limit to 30
+finalResult = finalResult.slice(0, 30);
 
-    // Save
-    await winningNumbers.create({
-      loginId: 0,
-      winningNumbers: finalResult,
-      totalPoints,
-      DrawTime: normalized,
-      drawDate,
-    });
+// numeric sort (same as before)
+finalResult = finalResult.sort((a, b) => Number(a.number) - Number(b.number));
+
+
+if (finalResult.length !== 30) {
+  console.warn("SAFETY TRIM applied — finalResult length:", finalResult.length);
+}
+
+
+console.log("AUTO: Validating final result...");
+validateFinalResult(finalResult);
+
+// Save
+await winningNumbers.create({
+  loginId: 0,
+  winningNumbers: finalResult,
+  totalPoints,
+  DrawTime: normalized,
+  drawDate,
+});
+
 
     console.log(`🎉 AUTO saved result for ${normalized} (case ${win_case})`);
     return true;

@@ -2,7 +2,12 @@ import cron from "node-cron";
 import moment from "moment-timezone";
 import { autoGenerateWinningNumbers } from "../controller/autoDraw.controller.js";
 
-// Runs every minute
+// ------------------- PREVENT MULTIPLE PM2 INSTANCES -------------------
+if (process.env.NODE_APP_INSTANCE && process.env.NODE_APP_INSTANCE !== "0") {
+  console.log("⛔ Scheduler disabled for this PM2 instance:", process.env.NODE_APP_INSTANCE);
+  return;
+}
+
 cron.schedule("* * * * *", async () => {
   try {
     const now = moment().tz("Asia/Kolkata");
@@ -16,7 +21,7 @@ cron.schedule("* * * * *", async () => {
 
     console.log(`⏳ Auto draw triggered for ${drawTime}`);
 
-    // 🚨 Only ONE result, no admin IDs
+    // 🚨 Only ONE result
     await autoGenerateWinningNumbers(drawTime);
 
     console.log(`✅ Global Draw saved for: ${drawTime}`);
