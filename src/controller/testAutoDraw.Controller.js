@@ -139,8 +139,7 @@ const countPurchasedInSeries = (seriesKey, purchasedSet) => {
   return c;
 };
 
-// ------------------ FILL SERIES (shared) -----------------
-// ------------------ FILL SERIES (shared) -----------------
+
 const fillSeriesWithRules = (seriesKey, initialArr, purchasedSet, usedWinners) => {
   const result = [...initialArr];
   const present = new Set(result.map((r) => String(r.number)));
@@ -258,7 +257,7 @@ const validateFinalResult = (finalResult) => {
   if (finalResult.length !== 30) {
     errors.push(`Expected 30 numbers, got ${finalResult.length}`);
   }
-  
+
   // Check series distribution
   const seriesCount = { "10": 0, "30": 0, "50": 0 };
   const prefixesUsed = {
@@ -532,6 +531,32 @@ await winningNumbers.create({
 }
 
 
+const selectLowestWinners = (sortedByQtyAsc, qtyCapacityTarget) => {
+  let winners = [];
+  let used = new Set();
+
+  for (let item of sortedByQtyAsc) {
+    const num = item.number;
+    const qty = item.qty;
+
+    if (qty <= qtyCapacityTarget && !used.has(num)) {
+      winners.push({
+        number: num,
+        quantity: qty,
+        value: qty * POINTS_PER_QUANTITY
+      });
+
+      qtyCapacityTarget -= qty;
+      used.add(num);
+    }
+
+    if (qtyCapacityTarget <= 0) break;
+  }
+
+  return winners;
+};
+
+
 // ------------------ MAIN CONTROLLER ----------------------
 export const manualGenerateWinningNumbers = async (req, res) => {
   try {
@@ -762,11 +787,35 @@ export const manualGenerateWinningNumbers = async (req, res) => {
       }
     }
 
-    // CASE 4: Fully random — do not pick any ticket numbers
+    // CASE 4: Lowest winning (30–40%)
     if (win_case === 4) {
-      console.log("➡ CASE 4: Fully random (no numbers from purchased tickets)");
-      // winners stay empty — series fill will generate all random numbers not in purchased set where possible
-      winners = [];
+      console.log("➡ CASE 4: Lowest Winning (30–40%) mode");
+
+      // 1) Sort by quantity ascending (lowest qty first)
+      const sortedByQtyAsc = [...sortedByQty].sort((a, b) => a.qty - b.qty);
+
+      // 2) Calculate min 30% and max 40%
+      const minTargetQty = Math.floor((winningPool * 0.30) / POINTS_PER_QUANTITY);
+      const maxTargetQty = Math.floor((winningPool * 0.40) / POINTS_PER_QUANTITY);
+
+      console.log("Min qty target (30%):", minTargetQty);
+      console.log("Max qty target (40%):", maxTargetQty);
+
+      // 3) Try to meet 30% first
+      winners = selectLowestWinners(sortedByQtyAsc, minTargetQty);
+
+      let usedQty = winners.reduce((s, w) => s + w.quantity, 0);
+
+      console.log("Selected winners qty total after 30% attempt:", usedQty);
+
+      // 4) If 30% impossible → increase to 40%
+      if (usedQty < minTargetQty) {
+        console.log("30% not possible → trying 40%");
+
+        winners = selectLowestWinners(sortedByQtyAsc, maxTargetQty);
+      }
+
+      console.log("Final lowest winners:", winners);
     }
 
     // keep log but do not forcibly add a smallest winner
