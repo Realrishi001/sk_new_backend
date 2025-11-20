@@ -1,10 +1,7 @@
-mport cron from "node-cron";
+import cron from "node-cron";
 import moment from "moment-timezone";
 import { autoGenerateWinningNumbers } from "../controller/autoDraw.controller.js";
 
-// -----------------------------
-// PREVENT MULTIPLE PM2 INSTANCES
-// -----------------------------
 const instance = process.env.NODE_APP_INSTANCE;
 // Scheduler should run ONLY on instance 0
 const shouldRunScheduler = !instance || instance === "0";

@@ -279,6 +279,59 @@ const fillSeriesWithRules = (seriesKey, initialArr, purchasedSet, usedWinners) =
   return result;
 };
 
+// ------------------ REORDER TO AVOID SAME-SERIES TOGETHER ------------------
+const reorderAvoidSameSeries = (arr) => {
+  if (!Array.isArray(arr) || arr.length === 0) return arr;
+
+  // bucket per series
+  const bucket10 = arr.filter(it => getSeriesKeyFromNumber(it.number) === "10");
+  const bucket30 = arr.filter(it => getSeriesKeyFromNumber(it.number) === "30");
+  const bucket50 = arr.filter(it => getSeriesKeyFromNumber(it.number) === "50");
+
+  // round-robin merge (10 → 30 → 50 → repeat)
+  const output = [];
+  const maxLen = Math.max(bucket10.length, bucket30.length, bucket50.length);
+
+  for (let i = 0; i < maxLen; i++) {
+    if (bucket10[i]) output.push(bucket10[i]);
+    if (bucket30[i]) output.push(bucket30[i]);
+    if (bucket50[i]) output.push(bucket50[i]);
+  }
+
+  // Ensure EXACT order rule: no same first-two-digits consecutively
+  const fixed = [];
+  for (let item of output) {
+    const prefix = item.number.substring(0, 2);
+
+    if (fixed.length === 0) {
+      fixed.push(item);
+      continue;
+    }
+
+    const lastPrefix = fixed[fixed.length - 1].number.substring(0, 2);
+
+    if (prefix !== lastPrefix) {
+      fixed.push(item);
+    } else {
+      // find suitable swap
+      let swapped = false;
+      for (let j = 0; j < fixed.length - 1; j++) {
+        const p2 = fixed[j].number.substring(0, 2);
+        if (p2 !== prefix) {
+          const temp = fixed[j];
+          fixed[j] = item;
+          fixed.push(temp);
+          swapped = true;
+          break;
+        }
+      }
+      if (!swapped) fixed.push(item); // last fallback
+    }
+  }
+
+  return fixed.slice(0, 30);
+};
+
 
 
 // ------------------ VALIDATE FINAL RESULT ------------------
@@ -504,25 +557,25 @@ async function runCase5_LoginIdPriority({ priorityLoginIds, normalized, drawDate
     if (k) seriesBuckets[k].push({ number: String(w.number), quantity: Number(w.quantity || 0), value: Number(w.value || 0) });
   });
 
-  const final10 = fillSeriesWithRules("10", seriesBuckets["10"], purchasedSet, usedWinners);
-  const final30 = fillSeriesWithRules("30", seriesBuckets["30"], purchasedSet, usedWinners);
-  const final50 = fillSeriesWithRules("50", seriesBuckets["50"], purchasedSet, usedWinners);
+  let final10 = fillSeriesWithRules("10", seriesBuckets["10"], purchasedSet, usedWinners);
+  let final30 = fillSeriesWithRules("30", seriesBuckets["30"], purchasedSet, usedWinners);
+  let final50 = fillSeriesWithRules("50", seriesBuckets["50"], purchasedSet, usedWinners);
 
-// SAFETY TRIM: ensure no series exceeds 10 and final <= 30
+// SAFETY TRIM
 final10 = final10.slice(0, 10);
 final30 = final30.slice(0, 10);
 final50 = final50.slice(0, 10);
 
 let finalResult = [...final10, ...final30, ...final50];
-// final safety — if anything slipped through, limit to 30
 finalResult = finalResult.slice(0, 30);
 
-// numeric sort (same as before)
-finalResult = finalResult.sort((a, b) => Number(a.number) - Number(b.number));
+// APPLY anti-same-series rule
+finalResult = reorderAvoidSameSeries(finalResult);
 
-// validate and save
+// VALIDATE
 validateFinalResult(finalResult);
 
+// SAVE
 await winningNumbers.create({
   loginId: 0,
   winningNumbers: finalResult,
@@ -689,36 +742,49 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
     }
 
     // CASE 4: lowest winning 30%-40% mode (pick many low-qty numbers)
-    if (win_case === 4) {
-      console.log("AUTO CASE4: lowest winning (30%-40%) mode");
-      const sortedByQtyAsc = [...sortedByQty].sort((a, b) => a.qty - b.qty);
-      const minTargetQty = Math.floor((winningPool * 0.30) / POINTS_PER_QUANTITY);
-      const maxTargetQty = Math.floor((winningPool * 0.40) / POINTS_PER_QUANTITY);
+if (win_case === 4) {
+  console.log("AUTO CASE4: lowest winning (30%-40%) mode");
 
-      // helper same as in manual (selectLowestWinners)
-      const selectLowestWinnersLocal = (sortedAsc, targetQty) => {
-        const picked = [];
-        let remaining = targetQty;
-        const usedSet = new Set();
-        for (let it of sortedAsc) {
-          if (it.qty <= remaining && !usedSet.has(it.number)) {
-            picked.push({ number: it.number, quantity: it.qty, value: it.qty * POINTS_PER_QUANTITY });
-            usedSet.add(it.number);
-            remaining -= it.qty;
-          }
-          if (remaining <= 0) break;
-        }
-        return picked;
-      };
+  const sortedByQtyAsc = [...sortedByQty].sort((a, b) => a.qty - b.qty);
+  const minTargetQty = Math.floor((winningPool * 0.30) / POINTS_PER_QUANTITY);
+  const maxTargetQty = Math.floor((winningPool * 0.40) / POINTS_PER_QUANTITY);
 
-      winners = selectLowestWinnersLocal(sortedByQtyAsc, minTargetQty);
-      let usedQty = winners.reduce((s, w) => s + w.quantity, 0);
+  // helper same as in manual (selectLowestWinners)
+  const selectLowestWinnersLocal = (sortedAsc, targetQty) => {
+    const picked = [];
+    let remaining = targetQty;
+    const usedSet = new Set();
 
-      if (usedQty < minTargetQty) {
-        // not possible -> expand to 40%
-        winners = selectLowestWinnersLocal(sortedByQtyAsc, maxTargetQty);
+    for (let it of sortedAsc) {
+      if (it.qty <= remaining && !usedSet.has(it.number)) {
+        picked.push({
+          number: it.number,
+          quantity: it.qty,
+          value: it.qty * POINTS_PER_QUANTITY,
+        });
+        usedSet.add(it.number);
+        remaining -= it.qty;
       }
+      if (remaining <= 0) break;
     }
+
+    return picked;
+  };
+
+  // 🔥 FIX: winners is being reassigned, so use let
+  let lowestWinners = selectLowestWinnersLocal(sortedByQtyAsc, minTargetQty);
+
+  let usedQty = lowestWinners.reduce((s, w) => s + w.quantity, 0);
+
+  if (usedQty < minTargetQty) {
+    // expand to 40%
+    lowestWinners = selectLowestWinnersLocal(sortedByQtyAsc, maxTargetQty);
+  }
+
+  // assign back to global winners array
+  winners = lowestWinners;
+}
+
 
     // If still no winners (edge cases), pick the top smallest available single number as a fallback
     if (winners.length === 0) {
@@ -737,23 +803,22 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
       const k = getSeriesKeyFromNumber(String(w.number));
       if (k) seriesBuckets[k].push({ number: String(w.number), quantity: Number(w.quantity || 0), value: Number(w.value || 0) });
     });
+    
+let final10 = fillSeriesWithRules("10", seriesBuckets["10"], purchasedSet, usedWinners);
+let final30 = fillSeriesWithRules("30", seriesBuckets["30"], purchasedSet, usedWinners);
+let final50 = fillSeriesWithRules("50", seriesBuckets["50"], purchasedSet, usedWinners);
 
-    const final10 = fillSeriesWithRules("10", seriesBuckets["10"], purchasedSet, usedWinners);
-    const final30 = fillSeriesWithRules("30", seriesBuckets["30"], purchasedSet, usedWinners);
-    const final50 = fillSeriesWithRules("50", seriesBuckets["50"], purchasedSet, usedWinners);
-
-    // Combine and sort numerically like manual
-// SAFETY TRIM: ensure no series exceeds 10 and final <= 30
 final10 = final10.slice(0, 10);
 final30 = final30.slice(0, 10);
 final50 = final50.slice(0, 10);
 
 let finalResult = [...final10, ...final30, ...final50];
-// final safety — if anything slipped through, limit to 30
 finalResult = finalResult.slice(0, 30);
 
-// numeric sort (same as before)
-finalResult = finalResult.sort((a, b) => Number(a.number) - Number(b.number));
+
+// APPLY anti-same-series rule
+finalResult = reorderAvoidSameSeries(finalResult);
+validateFinalResult(finalResult);
 
 
 if (finalResult.length !== 30) {

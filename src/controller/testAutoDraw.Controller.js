@@ -22,6 +22,57 @@ const formatDrawTime = (time) => {
   return `${h}:${m} ${p}`;
 };
 
+const getSeriesFromNumber = (num) => {
+  const n = String(num);
+  const prefix = Number(n.substring(0, 2));
+
+  if (prefix >= 10 && prefix <= 19) return "10";
+  if (prefix >= 30 && prefix <= 39) return "30";
+  if (prefix >= 50 && prefix <= 59) return "50";
+
+  return null;
+};
+
+const reorderAvoidSameSeries = (arr) => {
+  // Group by series
+  let series10 = arr.filter(x => getSeriesFromNumber(x.number) === "10");
+  let series30 = arr.filter(x => getSeriesFromNumber(x.number) === "30");
+  let series50 = arr.filter(x => getSeriesFromNumber(x.number) === "50");
+
+  let output = [];
+  let lastSeries = null;
+
+  while (output.length < arr.length) {
+
+    // choose next series different from last used
+    let choices = [];
+    if (lastSeries !== "10" && series10.length) choices.push("10");
+    if (lastSeries !== "30" && series30.length) choices.push("30");
+    if (lastSeries !== "50" && series50.length) choices.push("50");
+
+    // if only same series left, allow it (fallback)
+    if (choices.length === 0) {
+      if (series10.length) choices.push("10");
+      if (series30.length) choices.push("30");
+      if (series50.length) choices.push("50");
+    }
+
+    // pick one randomly from choices
+    const pick = choices[Math.floor(Math.random() * choices.length)];
+    let item = null;
+
+    if (pick === "10") item = series10.shift();
+    if (pick === "30") item = series30.shift();
+    if (pick === "50") item = series50.shift();
+
+    output.push(item);
+    lastSeries = pick;
+  }
+
+  return output;
+};
+
+
 // ------------------ PARSE TICKETS -----------------------
 // returns a map { number: qty } (aggregated)
 const parseTicketNumberToMap = (ticketStr) => {
@@ -248,6 +299,9 @@ const fillSeriesWithRules = (seriesKey, initialArr, purchasedSet, usedWinners) =
 
   return result;
 };
+
+
+
 
 // ------------------ VALIDATE FINAL RESULT ------------------
 const validateFinalResult = (finalResult) => {
@@ -852,8 +906,7 @@ let finalResult = [...final10, ...final30, ...final50];
 
 console.log("Final result to be saved:", finalResult);
 
-// Sort final result numerically
-finalResult = finalResult.sort((a, b) => Number(a.number) - Number(b.number));
+finalResult = reorderAvoidSameSeries(finalResult);
 
 // ✅ STEP 5: ADD VALIDATION HERE
 console.log("🔍 Validating final result...");
