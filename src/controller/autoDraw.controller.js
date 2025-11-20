@@ -139,145 +139,111 @@ const countPurchasedInSeries = (seriesKey, purchasedSet) => {
   return c;
 };
 
-// ------------------ FILL SERIES (shared) -----------------
-// ------------------ FILL SERIES (shared) -----------------
 const fillSeriesWithRules = (seriesKey, initialArr, purchasedSet, usedWinners) => {
-  // Make a defensive independent array, ensure all numbers are strings
-  const initial = Array.isArray(initialArr) ? initialArr.map(it => ({ ...it, number: String(it.number) })) : [];
 
-  // Deduplicate initial by number preserving order
+  // 1️⃣ Normalize input and dedupe
+  const initial = Array.isArray(initialArr)
+    ? initialArr.map(it => ({ ...it, number: String(it.number) }))
+    : [];
+
   const seen = new Set();
-  const dedupedInitial = [];
+  const deduped = [];
   for (const it of initial) {
     if (!it || !it.number) continue;
     if (!seen.has(it.number)) {
       seen.add(it.number);
-      dedupedInitial.push({ number: String(it.number), quantity: Number(it.quantity || 0), value: Number(it.value || 0) });
+      deduped.push({
+        number: String(it.number),
+        quantity: Number(it.quantity || 0),
+        value: Number(it.value || 0)
+      });
     }
   }
 
-  // Ensure items are from correct series only
-  const validatedInitial = dedupedInitial.filter(item => getSeriesKeyFromNumber(item.number) === seriesKey);
+  // 2️⃣ Keep only correct series
+  const valid = deduped.filter(
+    it => getSeriesKeyFromNumber(it.number) === seriesKey
+  );
 
-  // If validatedInitial already has more than 10 numbers -> trim to 10.
-  // Keep one number per prefix where possible to maximize prefix coverage.
   const seriesStart = seriesKey === "10" ? 10 : seriesKey === "30" ? 30 : 50;
 
-  // Group by prefix to prefer unique prefixes
-  const byPrefix = new Map();
-  validatedInitial.forEach(item => {
-    const prefix = Math.floor(Number(item.number) / 100);
-    if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
-    byPrefix.get(prefix).push(item);
-  });
+  // 3️⃣ Start result with unique-prefix initial winners
+  const result = [];
+  const usedPrefixes = new Set();
 
-  const finalInitial = [];
-  // First pick at most one from each prefix, in the order prefixes appear in validatedInitial
-  for (const item of validatedInitial) {
-    const prefix = Math.floor(Number(item.number) / 100);
-    if (finalInitial.length >= 10) break;
-    if (!finalInitial.some(x => Math.floor(Number(x.number) / 100) === prefix)) {
-      finalInitial.push(item);
+  for (const it of valid) {
+    const prefix = Math.floor(Number(it.number) / 100);
+    if (!usedPrefixes.has(prefix)) {
+      result.push(it);
+      usedPrefixes.add(prefix);
+      if (result.length === 10) break;
     }
   }
-  // If we still have slots and some prefixes had multiple entries, fill from them (preserve order)
-  if (finalInitial.length < 10) {
-    for (const item of validatedInitial) {
-      if (finalInitial.length >= 10) break;
-      if (!finalInitial.some(x => x.number === item.number)) {
-        finalInitial.push(item);
-      }
-    }
-  }
-  // If after that validatedInitial still >10 (shouldn't happen) slice to 10
-  if (finalInitial.length > 10) finalInitial.length = 10;
 
-  // Start result with finalInitial
-  const result = [...finalInitial];
-  const present = new Set(result.map((r) => String(r.number)));
-  const purchasedCount = countPurchasedInSeries(seriesKey, purchasedSet);
-  const allowRepeats = purchasedCount >= 1000;
+  const present = new Set(result.map(r => r.number));
+  const allowRepeats = countPurchasedInSeries(seriesKey, purchasedSet) >= 1000;
 
-  // compute used prefixes in result
-  const usedPrefixes = new Set(result.map(it => Math.floor(Number(it.number) / 100)));
-
-  // produce shuffled list of required prefixes for the series (e.g. 10..19)
+  // 4️⃣ Random filling of missing prefixes (light restriction)
   const allPrefixes = [];
   for (let i = 0; i < 10; i++) allPrefixes.push(seriesStart + i);
+
+  // shuffle
   for (let i = allPrefixes.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [allPrefixes[i], allPrefixes[j]] = [allPrefixes[j], allPrefixes[i]];
   }
 
-  // Fill missing prefixes first (one per prefix)
-  for (let prefix of allPrefixes) {
+  for (const prefix of allPrefixes) {
     if (result.length >= 10) break;
     if (usedPrefixes.has(prefix)) continue;
 
-    let candidate;
     let tries = 0;
-    const MAX_TRIES = 200;
+    let placed = false;
+    while (!placed && tries < 200) {
+      const suffix = Math.floor(Math.random() * 100)
+        .toString()
+        .padStart(2, "0");
+      const candidate = String(prefix).padStart(2, "0") + suffix;
 
-    do {
-      const suffix = Math.floor(Math.random() * 100).toString().padStart(2, "0");
-      candidate = String(prefix).padStart(2, "0") + suffix;
+      if (
+        !present.has(candidate) &&
+        (!purchasedSet.has(candidate) || allowRepeats) &&
+        !usedWinners.has(candidate)
+      ) {
+        result.push({ number: candidate, quantity: 0, value: 0 });
+        present.add(candidate);
+        usedPrefixes.add(prefix);
+        usedWinners.add(candidate);
+        placed = true;
+      }
       tries++;
-    } while (
-      (present.has(candidate) ||
-        (!allowRepeats && purchasedSet.has(candidate)) ||
-        usedWinners.has(candidate)) &&
-      tries < MAX_TRIES
-    );
-
-    if (tries < MAX_TRIES && !present.has(candidate)) {
-      result.push({ number: candidate, quantity: 0, value: 0 });
-      present.add(candidate);
-      usedWinners.add(candidate);
-      usedPrefixes.add(prefix);
     }
   }
 
-  // If still missing, fill with random numbers from series respecting restrictions
-  let tries = 0;
-  const MAX_TRIES_BIG = 30000;
-  while (result.length < 10 && tries < MAX_TRIES_BIG) {
-    tries++;
-    const candidate = genRandomInSeries(seriesKey);
-    if (present.has(candidate)) continue;
-
-    if (!purchasedSet.has(candidate) && !usedWinners.has(candidate)) {
-      result.push({ number: candidate, quantity: 0, value: 0 });
-      present.add(candidate);
-      usedWinners.add(candidate);
-      continue;
-    }
-
-    if (allowRepeats && !present.has(candidate)) {
-      result.push({ number: candidate, quantity: 0, value: 0 });
-      present.add(candidate);
-    }
-  }
-
-  // Final deterministic fallback: iterate all prefixes and suffixes
+  // 5️⃣ HARD fallback — force missing prefixes (ignores purchasedSet / usedWinners)
   if (result.length < 10) {
-    for (let ft = seriesStart; ft <= seriesStart + 9 && result.length < 10; ft++) {
-      for (let lt = 0; lt <= 99 && result.length < 10; lt++) {
-        const cand = String(ft).padStart(2, "0") + String(lt).padStart(2, "0");
+    for (let p = seriesStart; p <= seriesStart + 9; p++) {
+      if (result.length >= 10) break;
+      if (usedPrefixes.has(p)) continue;
+
+      for (let s = 0; s <= 99; s++) {
+        const cand =
+          String(p).padStart(2, "0") +
+          String(s).toString().padStart(2, "0");
+
         if (!present.has(cand)) {
-          if (!purchasedSet.has(cand) || allowRepeats) {
-            result.push({ number: cand, quantity: 0, value: 0 });
-            present.add(cand);
-          }
+          result.push({ number: cand, quantity: 0, value: 0 });
+          present.add(cand);
+          usedPrefixes.add(p);
+          break;
         }
       }
     }
   }
 
-  // Ensure final length is exactly 10 (trim if needed)
-  if (result.length > 10) result.length = 10;
-
-  return result;
+  return result.slice(0, 10);
 };
+
 
 // ------------------ REORDER TO AVOID SAME-SERIES TOGETHER ------------------
 const reorderAvoidSameSeries = (arr) => {
