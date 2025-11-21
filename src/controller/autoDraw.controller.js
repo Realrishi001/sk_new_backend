@@ -462,17 +462,19 @@ async function runCase5_LoginIdPriority({ priorityLoginIds, normalized, drawDate
 
         console.log(`Checking number ${num} (qty: ${qty}) from Ticket ${t.id}`);
 
-        if (qty > 0 && qty <= qtyCapacity && !winners.some((w) => w.number === num)) {
-          winners.push({
-            number: num,
-            quantity: qty,
-            value: qty * POINTS_PER_QUANTITY,
-            fromTicketId: t.id,
-            fromLoginId: t.loginId,
-          });
-          qtyCapacity -= qty;
-          console.log(`Winner added (PRIORITY ${pid}): ${num} from Ticket ${t.id} → remaining capacity ${qtyCapacity}`);
-        }
+const aggregatedQty = totals[num] || 0;
+
+if (aggregatedQty > 0 && aggregatedQty <= qtyCapacity && !winners.some((w) => w.number === num)) {
+  winners.push({
+    number: num,
+    quantity: aggregatedQty,
+    value: aggregatedQty * POINTS_PER_QUANTITY,
+    fromTicketId: t.id,
+    fromLoginId: t.loginId,
+  });
+  qtyCapacity -= aggregatedQty;
+}
+
 
         if (qtyCapacity <= 0) break;
       }
@@ -496,17 +498,19 @@ async function runCase5_LoginIdPriority({ priorityLoginIds, normalized, drawDate
 
         console.log(`Checking number ${num} (qty: ${qty}) from Ticket ${t.id}`);
 
-        if (qty > 0 && qty <= qtyCapacity && !winners.some((w) => w.number === num)) {
-          winners.push({
-            number: num,
-            quantity: qty,
-            value: qty * POINTS_PER_QUANTITY,
-            fromTicketId: t.id,
-            fromLoginId: t.loginId,
-          });
-          qtyCapacity -= qty;
-          console.log(`Winner added (FALLBACK): ${num} from Ticket ${t.id} → remaining capacity ${qtyCapacity}`);
-        }
+const aggregatedQty = totals[num] || 0;
+
+if (aggregatedQty > 0 && aggregatedQty <= qtyCapacity && !winners.some((w) => w.number === num)) {
+  winners.push({
+    number: num,
+    quantity: aggregatedQty,
+    value: aggregatedQty * POINTS_PER_QUANTITY,
+    fromTicketId: t.id,
+    fromLoginId: t.loginId,
+  });
+  qtyCapacity -= aggregatedQty;
+}
+
 
         if (qtyCapacity <= 0) break;
       }
@@ -669,23 +673,40 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
     }
 
     // CASE 2: highest purchaser (by totalQuatity desc)
-    if (win_case === 2) {
-      console.log("AUTO CASE2: highest purchaser priority");
-      for (let ticketRow of sortedByPurchasePower) {
-        const ticketArray = parseTicketNumberToArray(ticketRow.ticketNumber);
-        for (let entry of ticketArray) {
-          const num = String(entry.ticketNumber);
-          const qty = Number(entry.quantity || 0);
-          if (winners.some(w => w.number === num)) continue;
-          if (qty > 0 && qty <= qtyCapacity) {
-            winners.push({ number: num, quantity: qty, value: qty * POINTS_PER_QUANTITY, fromTicketId: ticketRow.id });
-            qtyCapacity -= qty;
-          }
-          if (qtyCapacity <= 0) break;
-        }
-        if (qtyCapacity <= 0) break;
+if (win_case === 2) {
+  console.log("AUTO CASE2: highest purchaser priority");
+
+  for (let ticketRow of sortedByPurchasePower) {
+    const ticketArray = parseTicketNumberToArray(ticketRow.ticketNumber);
+
+    for (let entry of ticketArray) {
+      const num = String(entry.ticketNumber);
+      const qty = Number(entry.quantity || 0);
+
+      // skip if already selected
+      if (winners.some(w => w.number === num)) continue;
+
+      // aggregated quantity across ALL tickets
+      const aggregatedQty = totals[num] || 0;
+
+      // final correct condition
+      if (aggregatedQty > 0 && aggregatedQty <= qtyCapacity) {
+        winners.push({
+          number: num,
+          quantity: aggregatedQty,
+          value: aggregatedQty * POINTS_PER_QUANTITY,
+          fromTicketId: ticketRow.id
+        });
+
+        qtyCapacity -= aggregatedQty;  // reduce correctly
       }
+
+      if (qtyCapacity <= 0) break;
     }
+
+    if (qtyCapacity <= 0) break;
+  }
+}
 
     // CASE 3: lowest purchaser (by totalQuatity asc)
     if (win_case === 3) {
@@ -697,10 +718,19 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
           const num = String(entry.ticketNumber);
           const qty = Number(entry.quantity || 0);
           if (winners.some(w => w.number === num)) continue;
-          if (qty > 0 && qty <= qtyCapacity) {
-            winners.push({ number: num, quantity: qty, value: qty * POINTS_PER_QUANTITY, fromTicketId: ticketRow.id });
-            qtyCapacity -= qty;
-          }
+const aggregatedQty = totals[num] || 0;
+
+if (aggregatedQty > 0 && aggregatedQty <= qtyCapacity) {
+  winners.push({
+    number: num,
+    quantity: aggregatedQty,
+    value: aggregatedQty * POINTS_PER_QUANTITY,
+    fromTicketId: ticketRow.id
+  });
+
+  qtyCapacity -= aggregatedQty;
+}
+
           if (qtyCapacity <= 0) break;
         }
         if (qtyCapacity <= 0) break;
