@@ -44,21 +44,20 @@ function parseDrawTimeToArray(raw) {
 
 
 export const checkTicketWinningStatus = async (req, res) => {
+  const t = await sequelizeCon.transaction();
+
   try {
     const { ticketId } = req.body;
     const PAYOUT_RATE = 180;
 
-    // Step 1: Validate input
     if (!ticketId) {
       return res.status(400).json({
         status: "error",
-        message: "ticketId is required.",
+        message: "ticketId is required",
       });
     }
 
-    console.log("🎯 Checking Ticket ID:", ticketId);
-
-    // Step 2: Check if already claimed
+    // 1️⃣ Already Claimed
     const alreadyClaimed = await claimedTickets.findOne({
       where: { TicketId: ticketId },
     });
@@ -67,13 +66,17 @@ export const checkTicketWinningStatus = async (req, res) => {
       return res.status(200).json({
         status: "already_claimed",
         message: "This ticket has already been claimed.",
+        claimedDate: alreadyClaimed.claimedDate,
+        claimedTime: alreadyClaimed.claimedTime,
+        ticketId,
       });
     }
 
-    // Step 3: Fetch ticket details
+    // 2️⃣ Fetch Ticket
     const ticket = await tickets.findOne({
       where: { id: ticketId },
       attributes: ["id", "loginId", "ticketNumber", "drawTime", "gameTime"],
+      transaction: t,
     });
 
     if (!ticket) {
@@ -83,164 +86,160 @@ export const checkTicketWinningStatus = async (req, res) => {
       });
     }
 
-    const { ticketNumber, drawTime, gameTime } = ticket;
+    const { loginId, ticketNumber, drawTime, gameTime } = ticket;
 
-    // Step 4: Get draw date from gameTime (format: "16-11-2025 16:22:09" → "2025-11-16")
+    // 3️⃣ Convert draw date
     let drawDate = "";
     if (typeof gameTime === "string") {
-      const datePart = gameTime.split(" ")[0]; // "16-11-2025"
-      const parts = datePart.split("-"); // ["16", "11", "2025"]
-      if (parts.length === 3) {
-        drawDate = `${parts[2]}-${parts[1]}-${parts[0]}`; // "2025-11-16"
-      }
+      const [d, m, y] = gameTime.split(" ")[0].split("-");
+      drawDate = `${y}-${m}-${d}`;
     }
 
-    console.log("📅 Draw Date:", drawDate);
-
-    // Step 5: Parse draw times
+    // 4️⃣ Parse drawTime
     let parsedDrawTimes = [];
     try {
       parsedDrawTimes = Array.isArray(drawTime) ? drawTime : JSON.parse(drawTime);
     } catch {
       parsedDrawTimes = [drawTime];
     }
-    
     parsedDrawTimes = parsedDrawTimes
       .map((t) => normalizeDrawTime(t))
       .filter(Boolean);
 
-    console.log("🕒 Draw Times:", parsedDrawTimes);
-
-    // Step 6: Parse ticket numbers
+    // 5️⃣ Parse ticket numbers
     let parsedTickets = [];
     try {
-      parsedTickets = Array.isArray(ticketNumber) ? ticketNumber : JSON.parse(ticketNumber);
-    } catch (error) {
+      parsedTickets = Array.isArray(ticketNumber)
+        ? ticketNumber
+        : JSON.parse(ticketNumber);
+    } catch {
       return res.status(400).json({
         status: "error",
         message: "Invalid ticket number format.",
       });
     }
 
-    console.log("🎫 Ticket Numbers:", parsedTickets);
-
-    // Step 7: Fetch winning numbers for the date
+    // 6️⃣ Fetch winning rows
     const winningRows = await winningNumbers.findAll({
       where: { drawDate },
       attributes: ["winningNumbers", "DrawTime"],
+      transaction: t,
     });
 
     if (!winningRows.length) {
       return res.status(200).json({
         status: "no_winning_data",
-        message: "No winning numbers found for this draw date.",
+        message: "Winning numbers are not published for this date.",
         drawDate,
       });
     }
 
-    // Step 8: Find matching draw times and get winning numbers
-    const allWinningNumbers = new Set();
+    // 7️⃣ Build winning number set
+    const winSet = new Set();
 
     for (const row of winningRows) {
       let winTimes = [];
-      
-      // Parse draw times from winning numbers row
+
       try {
         if (Array.isArray(row.DrawTime)) {
           winTimes = row.DrawTime;
-        } else if (typeof row.DrawTime === "string") {
-          try {
-            const parsed = JSON.parse(row.DrawTime);
-            winTimes = Array.isArray(parsed) ? parsed : [parsed];
-          } catch {
-            winTimes = [row.DrawTime];
-          }
+        } else {
+          const parsed = JSON.parse(row.DrawTime);
+          winTimes = Array.isArray(parsed) ? parsed : [parsed];
         }
       } catch {
-        winTimes = [];
+        winTimes = [row.DrawTime];
       }
 
-      // Normalize winning draw times
       winTimes = winTimes.map((t) => normalizeDrawTime(t)).filter(Boolean);
 
-      // Check if any draw time matches
-      const hasMatchingDrawTime = parsedDrawTimes.some((ticketTime) => 
-        winTimes.includes(ticketTime)
-      );
+      const match = parsedDrawTimes.some((d) => winTimes.includes(d));
+      if (!match) continue;
 
-      if (hasMatchingDrawTime) {
-        // Parse winning numbers
-        let winners = [];
-        try {
-          winners = Array.isArray(row.winningNumbers) 
-            ? row.winningNumbers 
-            : JSON.parse(row.winningNumbers);
-        } catch {
-          winners = [];
-        }
-
-        // Add winning numbers to set
-        winners.forEach(win => {
-          if (win && win.number) {
-            allWinningNumbers.add(win.number);
-          }
-        });
+      let winners = [];
+      try {
+        winners = Array.isArray(row.winningNumbers)
+          ? row.winningNumbers
+          : JSON.parse(row.winningNumbers);
+      } catch {
+        winners = [];
       }
+
+      winners.forEach((w) => {
+        if (w?.number) winSet.add(w.number);
+      });
     }
 
-    console.log("🏆 Winning Numbers:", Array.from(allWinningNumbers));
+    // 8️⃣ Compare user tickets with winning numbers
+    const matches = parsedTickets
+      .filter((tk) => winSet.has(tk.ticketNumber))
+      .map((tk) => ({
+        number: tk.ticketNumber,
+        quantity: tk.quantity,
+        payout: tk.quantity * PAYOUT_RATE,
+      }));
 
-    // Step 9: Check for matches between ticket numbers and winning numbers
-    const matches = [];
-    
-    for (const ticket of parsedTickets) {
-      if (allWinningNumbers.has(ticket.ticketNumber)) {
-        const payout = ticket.quantity * PAYOUT_RATE;
-        matches.push({
-          number: ticket.ticketNumber,
-          quantity: ticket.quantity,
-          payout,
-        });
-      }
-    }
-
-    console.log("✅ Matches Found:", matches);
-
-    // Step 10: Calculate total winning amount
-    const totalWinningAmount = matches.reduce((sum, match) => sum + match.payout, 0);
-
-    // Step 11: Send response
-    if (matches.length === 0) {
+    // 9️⃣ If not winning → DO NOT save, do not toast
+    if (!matches.length) {
       return res.status(200).json({
         status: "no_win",
-        message: "Ticket has no winning numbers.",
+        message: "Not a winning ticket.",
+        ticketId,
         drawDate,
         drawTimes: parsedDrawTimes,
         totalWinningAmount: 0,
+        matches: [],
         claimable: false,
       });
     }
 
+    // 🔟 Calculate total winnings
+    const totalWinningAmount = matches.reduce((a, b) => a + b.payout, 0);
+
+    // 1️⃣1️⃣ Save ONLY winning tickets
+    const now = new Date();
+    const claimedDate = now.toISOString().split("T")[0];
+    const claimedTime = now.toTimeString().split(" ")[0];
+
+    await claimedTickets.create(
+      {
+        TicketId: ticketId,
+        loginId,
+        ticketNumbers: matches,
+        drawTime: parsedDrawTimes.join(", "),
+        drawDate,
+        claimedDate,
+        claimedTime,
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+
+    // 1️⃣2️⃣ Return winner data
     return res.status(200).json({
       status: "winner",
-      message: "This is a winning ticket!",
+      message: "Winning ticket!",
       ticketId,
       drawDate,
       drawTimes: parsedDrawTimes,
+      winningNumbers: Array.from(winSet),
       matches,
       totalWinningAmount,
-      winningNumbers: Array.from(allWinningNumbers),
       claimable: true,
     });
 
   } catch (error) {
-    console.error("🔥 Error checking ticket status:", error);
+    await t.rollback();
+    console.error("🔥 Error checking ticket:", error);
     return res.status(500).json({
       status: "error",
-      message: "An unexpected error occurred while checking the ticket status.",
+      message: "Server error while checking ticket.",
     });
   }
 };
+
+
 
 function toYYYYMMDD(input) {
   const s = String(input || "");

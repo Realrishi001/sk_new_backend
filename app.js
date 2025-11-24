@@ -23,6 +23,7 @@ import userAccountRouter from './src/routes/userAccount.router.js'
 import autoDrawRouter from './src/routes/testAutoDraw.router.js'
 import topSellerRouter from './src/routes/topSeller.router.js'
 import priorWinningRouter from './src/routes/priorWinning.router.js'
+import accountRouter from './src/routes/account.router.js'
 
 import "./src/schedular/autoDrawScheduler.js"
 
@@ -80,6 +81,8 @@ app.use("/api", userAccountRouter);
 app.use("/api/auto-draw", autoDrawRouter);
 app.use("/api", topSellerRouter);
 app.use("/api", priorWinningRouter);
+app.use("/api", accountRouter);
+
 // Start the server
 
 app.listen(port, ()=> {

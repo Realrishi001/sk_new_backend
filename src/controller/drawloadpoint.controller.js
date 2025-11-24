@@ -235,7 +235,9 @@ const parseTicketNumber = (raw) => {
 
 export const getTicketsBySeriesWithShop = async (req, res) => {
   try {
-    const { drawTime } = req.query; // optional query param (e.g. "06:30 PM")
+
+    const { drawTime } = req.body;
+    console.log(drawTime);
 
     // 🗓️ Use current date (today)
     const today = new Date();
@@ -250,6 +252,7 @@ export const getTicketsBySeriesWithShop = async (req, res) => {
       attributes: ["ticketNumber", "loginId", "drawTime", "gameTime"],
       order: [["createdAt", "DESC"]],
     });
+
 
     // 🧩 Parse ticketNumber safely
 const parseTicketNumber = (raw) => {
