@@ -9,7 +9,7 @@ const superAdmin = sequelizeCon.define(
             primaryKey : true,
             autoIncrement : true,
         },
-        fullName : {
+        shopName : {
             type: DataTypes.STRING,
             allowNull : true
         },

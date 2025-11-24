@@ -10,7 +10,7 @@ export const getAdminPointsSummary = async (req, res) => {
     // 1. Get admin info
     const admin = await Admin.findOne({
       where: { id: loginId },
-      attributes: ["fullName", "userName", "commission", "balance"]
+      attributes: ["shopName", "userName", "commission", "balance"]
     });
     if (!admin) {
       return res.status(404).json({ message: "Admin not found" });
@@ -45,9 +45,8 @@ export const getAdminPointsSummary = async (req, res) => {
     const updatedTotalPoint = netPoints; // after commission
     const winningPoints = updatedTotalPoint * (winPerc / 100);
 
-    // 6. Prepare response
     return res.json({
-      fullName: admin.fullName,
+      shopName: admin.shopName,
       userName: admin.userName,
       commission: admin.commission,
       balance: admin.balance,

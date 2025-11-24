@@ -1,5 +1,4 @@
 import { sequelizeCon, DataTypes } from "../init/dbConnection.js";
-import bcrypt from "bcryptjs";
 
 const Admin = sequelizeCon.define(
   "admins",
@@ -57,10 +56,13 @@ const Admin = sequelizeCon.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
+
+    // ❗ Password saved in plain text
     password: {
       type: DataTypes.STRING,
       allowNull: true,
     },
+
     commission: {
       type: DataTypes.INTEGER,
       allowNull: true,
@@ -84,7 +86,6 @@ const Admin = sequelizeCon.define(
       allowNull: false,
     },
 
-    // ⭐ NEW COLUMN ADDED ⭐
     priorWinning: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
@@ -93,20 +94,7 @@ const Admin = sequelizeCon.define(
   },
   {
     timestamps: true,
-    hooks: {
-      beforeCreate: async (admin) => {
-        if (admin.password) {
-          const salt = await bcrypt.genSalt(10);
-          admin.password = await bcrypt.hash(admin.password, salt);
-        }
-      },
-      beforeUpdate: async (admin) => {
-        if (admin.changed("password")) {
-          const salt = await bcrypt.genSalt(10);
-          admin.password = await bcrypt.hash(admin.password, salt);
-        }
-      }
-    }
+    hooks: {} 
   }
 );
 

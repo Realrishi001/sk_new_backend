@@ -1,5 +1,6 @@
 import { manualGenerateWinningNumbers } from "./testAutoDraw.Controller.js";
 import { winningNumbers } from "../models/winningNumbers.model.js";
+import { Op } from "sequelize";
 
 export const autoGenerateWinningNumbers = async (drawTime) => {
   try {
@@ -13,9 +14,12 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
 
     console.log("⏳ AUTO DRAW Triggered:", normalizedDrawTime, "on", drawDate);
 
-
+    // Use Op.like to match JSON/array stored DrawTime (e.g. '["09:45 PM"]')
     const exists = await winningNumbers.findOne({
-      where: { DrawTime: normalizedDrawTime, drawDate },
+      where: {
+        drawDate,
+        DrawTime: { [Op.like]: `%${normalizedDrawTime}%` },
+      },
     });
 
     if (exists) {
@@ -23,31 +27,14 @@ export const autoGenerateWinningNumbers = async (drawTime) => {
       return false;
     }
 
-    const fakeReq = {
-      body: {
-        drawTime: normalizedDrawTime,
-        drawDate,
-      },
-    };
-
-    const manualResponse = {};
-
-    const fakeRes = {
-      status: (code) => ({
-        json: (data) => {
-          manualResponse.code = code;
-          manualResponse.data = data;
-          return manualResponse;
-        },
-      }),
-    };
-
-
-    const result = await manualGenerateWinningNumbers(fakeReq, fakeRes);
+    // Call the manual generator directly (see Step 2)
+    const result = await manualGenerateWinningNumbers({
+      drawTime: normalizedDrawTime,
+      drawDate,
+    });
 
     console.log(`🎉 AUTO SUCCESS for DrawTime ${normalizedDrawTime}`);
     return result;
-
   } catch (err) {
     console.error("❌ AUTO CONTROLLER ERROR:", err);
     return false;

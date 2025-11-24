@@ -29,7 +29,7 @@ export const superAdminLogin = async (req, res) => {
     const payload = {
       id: admin.id,
       userName: admin.userName,
-      fullName: admin.fullName,
+      shopName: admin.shopName,
       emailAddress: admin.emailAddress
     };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1d" });
@@ -52,7 +52,7 @@ export const superAdminLogin = async (req, res) => {
 export const createSuperAdmin = async (req, res) => {
   try {
     const {
-      fullName,
+      shopName,
       userName,
       address,
       phoneNumber,
@@ -62,7 +62,7 @@ export const createSuperAdmin = async (req, res) => {
 
     // Simple required field check
     if (
-      !fullName ||
+      !shopName ||
       !userName ||
       !address ||
       !phoneNumber ||
@@ -89,7 +89,7 @@ export const createSuperAdmin = async (req, res) => {
 
     // Create super admin (password hashed by model hook)
     const admin = await superAdmin.create({
-      fullName,
+      shopName,
       userName,
       address,
       phoneNumber,
@@ -115,7 +115,7 @@ export const getAllSuperAdmins = async (req, res) => {
     const admins = await superAdmin.findAll({
       attributes: [
         "id",
-        "fullName",
+        "shopName",
         "userName",
         "address",
         "phoneNumber",

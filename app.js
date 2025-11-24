@@ -61,7 +61,6 @@ app.get('/', (req, res) => {
     });
 });
 
-
 app.use("/api", printdTicekts);
 app.use("/api", admins);
 app.use("/api", winningPercentage);
@@ -83,7 +82,6 @@ app.use("/api", topSellerRouter);
 app.use("/api", priorWinningRouter);
 app.use("/api", accountRouter);
 
-// Start the server
 
 app.listen(port, ()=> {
     console.log(`Server is running on port ${port}`);

@@ -14,7 +14,7 @@ export const changeAdminPassword = async (req, res) => {
   try {
     const { userName, oldPassword, newPassword } = req.body;
 
-    // 1️⃣ Check required fields
+    // 1️⃣ Validate input
     if (!userName || !oldPassword || !newPassword) {
       return res.status(400).json({
         status: "error",
@@ -22,7 +22,7 @@ export const changeAdminPassword = async (req, res) => {
       });
     }
 
-    // 2️⃣ Find admin by username
+    // 2️⃣ Find admin
     const admin = await Admin.findOne({ where: { userName } });
 
     if (!admin) {
@@ -32,26 +32,22 @@ export const changeAdminPassword = async (req, res) => {
       });
     }
 
-    // 3️⃣ Compare old password
-    const isMatch = await bcrypt.compare(oldPassword, admin.password);
-    if (!isMatch) {
+    // 3️⃣ Check old password (plain text comparison)
+    if (admin.password !== oldPassword) {
       return res.status(401).json({
         status: "error",
         message: "Incorrect old password.",
       });
     }
 
-    // 4️⃣ Hash and update new password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(newPassword, salt);
+    // 4️⃣ Update password directly (NO HASHING)
+    await admin.update({ password: newPassword });
 
-    await admin.update({ password: hashedPassword });
-
-    // 5️⃣ Respond success
     return res.status(200).json({
       status: "success",
       message: "Password updated successfully.",
     });
+
   } catch (error) {
     console.error("🔥 Error changing password:", error);
     return res.status(500).json({
@@ -156,45 +152,55 @@ export const adminLogin = async (req, res) => {
   try {
     const { userName, password } = req.body;
 
-    // Validate input
+    // Validate required fields
     if (!userName || !password) {
-      return res.status(400).json({ message: "Username and password are required." });
+      return res.status(400).json({
+        message: "Username and password are required."
+      });
     }
 
-    // Find the admin by username
+    // Fetch admin record
     const admin = await Admin.findOne({ where: { userName } });
+
     if (!admin) {
-      return res.status(401).json({ message: "Invalid username or password." });
+      return res.status(401).json({
+        message: "Invalid username or password."
+      });
     }
 
-    // Compare the password with the stored hash
-    const isMatch = await bcrypt.compare(password, admin.password);
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid username or password." });
+    // Plain-text password checking (no hashing)
+    if (admin.password !== password) {
+      return res.status(401).json({
+        message: "Invalid username or password."
+      });
     }
 
+    // Mark as logged in
     admin.isLoggedIn = true;
-    await admin.save();  // Save the updated status to the database
+    await admin.save();
 
+    // Create JWT token
     const payload = {
       id: admin.id,
-      userName: admin.userName
+      userName: admin.userName,
     };
 
-    // Generate JWT token
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1d" });
 
-    // Return success message with the token
-    res.status(200).json({
+    return res.status(200).json({
       message: "Login successful!",
-      token
+      token,
     });
 
   } catch (error) {
     console.error("Admin login error:", error);
-    res.status(500).json({ message: "Server error.", error: error.message });
+    return res.status(500).json({
+      message: "Server error.",
+      error: error.message,
+    });
   }
 };
+
 
 
 export const updateAdmin = async (req, res) => {

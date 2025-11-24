@@ -6,11 +6,17 @@ import Admin from "../models/admins.model.js";
 
 export const manualGenerateWinningNumbers = async (req, res) => {
   try {
-    const { drawTime, drawDate } = req.body;
+    // Detect AUTO mode (scheduler)
+    const isAuto = !res;
+    const body = isAuto ? req : req.body;
+
+    const { drawTime, drawDate } = body;
     const PRICE = 180;
 
-    if (!drawTime || !drawDate)
+    if (!drawTime || !drawDate) {
+      if (isAuto) return { success: false, message: "drawTime and drawDate required" };
       return res.status(400).json({ message: "drawTime and drawDate required" });
+    }
 
     const normalizeTime = (t) => String(t).trim().toUpperCase();
     const normalizedTime = normalizeTime(drawTime);
@@ -19,13 +25,15 @@ export const manualGenerateWinningNumbers = async (req, res) => {
     // CHECK IF RESULT ALREADY EXISTS
     // ------------------------------------
     const already = await winningNumbers.findOne({
-      where: { DrawTime: normalizedTime, drawDate },
+      where: {
+        drawDate,
+        DrawTime: { [Op.like]: `%${normalizedTime}%` }
+      },
     });
 
     if (already) {
-      return res.status(400).json({
-        message: "Result already declared",
-      });
+      if (isAuto) return { success: false, message: "Result already declared" };
+      return res.status(400).json({ message: "Result already declared" });
     }
 
     // ------------------------------------
@@ -85,7 +93,6 @@ export const manualGenerateWinningNumbers = async (req, res) => {
         ...generateSeries(50),
       ];
 
-      // SAVE IN DB (FORMAT A)
       await winningNumbers.create({
         loginId: 0,
         winningNumbers: final30,
@@ -94,8 +101,7 @@ export const manualGenerateWinningNumbers = async (req, res) => {
         drawDate,
       });
 
-      // RETURN AS FORMAT B
-      return res.status(200).json({
+      const responseData = {
         message: "Winners selected successfully",
         caseUsed: "random",
         winners: final30.map((x) => ({
@@ -106,11 +112,14 @@ export const manualGenerateWinningNumbers = async (req, res) => {
           ticketIds: [],
           ticketCount: 0,
         })),
-      });
+      };
+
+      if (isAuto) return { success: true, ...responseData };
+      return res.status(200).json(responseData);
     }
 
     // ------------------------------------------------------------
-    // BELOW THIS → YOUR ORIGINAL LOGIC (unchanged)
+    // ORIGINAL LOGIC (UNTOUCHED)
     // ------------------------------------------------------------
 
     const priorityAdmins = await Admin.findAll({
@@ -266,7 +275,6 @@ export const manualGenerateWinningNumbers = async (req, res) => {
       }
     }
 
-    // LIMIT 10 PER SERIES
     const finalWinners = [];
     const limit = { "1": 0, "3": 0, "5": 0 };
 
@@ -278,7 +286,6 @@ export const manualGenerateWinningNumbers = async (req, res) => {
       limit[g]++;
     }
 
-    // RANDOM FILL
     const purchased = new Set(Object.keys(numberToTicketMap));
     const used = new Set(finalWinners.map((w) => w.number));
 
@@ -309,9 +316,7 @@ export const manualGenerateWinningNumbers = async (req, res) => {
     fillRandom("3");
     fillRandom("5");
 
-    // ------------------------------------------------------------
-    // SAVE TO DB (FORMAT A)
-    // ------------------------------------------------------------
+    // SAVE TO DB
     await winningNumbers.create({
       loginId: 0,
       winningNumbers: finalWinners.map((x) => ({
@@ -324,16 +329,20 @@ export const manualGenerateWinningNumbers = async (req, res) => {
       drawDate,
     });
 
-    // ------------------------------------------------------------
-    // RETURN TO API (FORMAT B)
-    // ------------------------------------------------------------
-    return res.status(200).json({
+    const finalResponse = {
       message: "Winners selected successfully",
       caseUsed,
       winners: finalWinners,
-    });
+    };
+
+    if (isAuto) return { success: true, ...finalResponse };
+    return res.status(200).json(finalResponse);
+
   } catch (err) {
     console.log(err);
+
+    if (isAuto) return { success: false, message: "Server error", error: err };
+
     return res.status(500).json({ message: "Server error" });
   }
 };
