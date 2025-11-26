@@ -12,6 +12,14 @@ export const getSummaryReport = async (req, res) => {
         message: "from, to, loginId are required",
       });
     }
+    // Build full-day date range so "from" == "to" covers whole day
+    const startDate = new Date(from);
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(to);
+    endDate.setHours(23, 59, 59, 999);
+
+
 
     const adminData = await Admin.findOne({
       where: { id: loginId },
@@ -28,9 +36,10 @@ export const getSummaryReport = async (req, res) => {
     const ticketList = await tickets.findAll({
       where: {
         loginId: loginId,
-        createdAt: {
-          [Op.between]: [new Date(from), new Date(to)],
-        },
+createdAt: {
+  [Op.between]: [startDate, endDate],
+},
+
       },
     });
 
@@ -79,13 +88,20 @@ export const getSummaryReport = async (req, res) => {
 export const netToPaySummary = async (req, res) => {
   try {
     const { from, to, loginId } = req.body;
+    
+        if (!from || !to || !loginId) {
+          return res.status(400).json({
+            status: false,
+            message: "from, to, loginId are required",
+          });
+        }
+    // Build full-day date range so "from" == "to" covers whole day
+    const startDate = new Date(from);
+    startDate.setHours(0, 0, 0, 0);
 
-    if (!from || !to || !loginId) {
-      return res.status(400).json({
-        status: false,
-        message: "from, to, loginId are required",
-      });
-    }
+    const endDate = new Date(to);
+    endDate.setHours(23, 59, 59, 999);
+
 
     const adminData = await Admin.findOne({
       where: { id: loginId },
@@ -103,8 +119,8 @@ export const netToPaySummary = async (req, res) => {
       where: {
         loginId: loginId,
         createdAt: {
-          [Op.between]: [new Date(from), new Date(to)],
-        },
+            [Op.between]: [startDate, endDate],
+          },
       },
     });
 
@@ -163,13 +179,22 @@ export const pointsAllocatedByDate = async (req, res) => {
         message: "from, to, loginId are required",
       });
     }
+    // Build full-day date range so "from" == "to" covers whole day
+      const startDate = new Date(from);
+      startDate.setHours(0, 0, 0, 0);
+
+      const endDate = new Date(to);
+      endDate.setHours(23, 59, 59, 999);
+
+
 
     const ticketList = await tickets.findAll({
       where: {
         loginId: loginId,
-        createdAt: {
-          [Op.between]: [new Date(from), new Date(to)],
-        },
+createdAt: {
+  [Op.between]: [startDate, endDate],
+},
+
       },
       attributes: ["totalPoints", "createdAt"]
     });
@@ -198,8 +223,9 @@ export const pointsAllocatedByDate = async (req, res) => {
 
     let result = [];
 
-    let start = new Date(from);
-    const end = new Date(to);
+let start = new Date(startDate);
+const end = new Date(endDate);
+
 
     while (start <= end) {
       const dateStr = formatDate(start);

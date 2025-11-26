@@ -631,3 +631,153 @@ const cleanedTicketNumbers = (Array.isArray(ticketNumbersArr) ? ticketNumbersArr
     res.status(500).json({ error: "Internal server error" });
   }
 };
+
+
+export const getPendingClaimTickets = async (req, res) => {
+  try {
+    const { loginId } = req.body;
+
+    if (!loginId) {
+      return res.status(400).json({
+        status: "error",
+        message: "loginId is required",
+      });
+    }
+
+    // 1️⃣ Fetch all claimed ticket IDs
+    const claimed = await claimedTickets.findAll({
+      where: { loginId },
+      attributes: ["TicketId"],
+    });
+
+    const claimedIds = new Set(claimed.map(c => c.TicketId));
+
+    // 2️⃣ Fetch all tickets of this user (excluding claimed)
+    const userTickets = await tickets.findAll({
+      where: {
+        loginId,
+        id: { [Op.notIn]: Array.from(claimedIds) }
+      },
+      attributes: ["id", "ticketNumber", "drawTime", "gameTime"]
+    });
+
+    if (!userTickets.length) {
+      return res.status(200).json({
+        status: "success",
+        pendingClaimableTickets: [],
+        message: "No unclaimed tickets found."
+      });
+    }
+
+    let pendingClaimable = [];
+
+    // 3️⃣ For every ticket, reuse winning-logic
+    for (const ticket of userTickets) {
+      const { id, ticketNumber, drawTime, gameTime } = ticket;
+
+      // A) Get draw date
+      let drawDate = "";
+      if (typeof gameTime === "string") {
+        const [d, m, y] = gameTime.split(" ")[0].split("-");
+        drawDate = `${y}-${m}-${d}`;
+      }
+
+      // B) Parse drawTimes
+      let parsedDrawTimes = [];
+      try {
+        parsedDrawTimes = Array.isArray(drawTime)
+          ? drawTime
+          : JSON.parse(drawTime);
+      } catch {
+        parsedDrawTimes = [drawTime];
+      }
+      parsedDrawTimes = parsedDrawTimes
+        .map(normalizeDrawTime)
+        .filter(Boolean);
+
+      // C) Parse ticket numbers
+      let parsedTickets = [];
+      try {
+        parsedTickets = Array.isArray(ticketNumber)
+          ? ticketNumber
+          : JSON.parse(ticketNumber);
+      } catch {
+        continue; // skip invalid tickets
+      }
+
+      // D) Fetch winning rows
+      const winningRows = await winningNumbers.findAll({
+        where: { drawDate },
+        attributes: ["winningNumbers", "DrawTime"],
+      });
+
+      if (!winningRows.length) continue; // no results yet
+
+      // E) Build winning set
+      const winSet = new Set();
+
+      for (const row of winningRows) {
+        let rowTimes = [];
+
+        try {
+          const parsed = Array.isArray(row.DrawTime)
+            ? row.DrawTime
+            : JSON.parse(row.DrawTime);
+          rowTimes = Array.isArray(parsed) ? parsed : [parsed];
+        } catch {
+          rowTimes = [row.DrawTime];
+        }
+
+        rowTimes = rowTimes.map(normalizeDrawTime).filter(Boolean);
+
+        const match = parsedDrawTimes.some(t => rowTimes.includes(t));
+        if (!match) continue;
+
+        let winners = [];
+        try {
+          winners = Array.isArray(row.winningNumbers)
+            ? row.winningNumbers
+            : JSON.parse(row.winningNumbers);
+        } catch {
+          winners = [];
+        }
+
+        winners.forEach(w => winSet.add(w.number));
+      }
+
+      // F) Compare user numbers vs winners
+      const matches = parsedTickets
+        .filter(t => winSet.has(t.ticketNumber))
+        .map(t => ({
+          number: t.ticketNumber,
+          quantity: t.quantity,
+          payout: t.quantity * 180,
+        }));
+
+      if (matches.length === 0) continue; // not a winner
+
+      const totalWinningAmount = matches.reduce((sum, m) => sum + m.payout, 0);
+
+      pendingClaimable.push({
+        ticketId: id,
+        drawDate,
+        drawTimes: parsedDrawTimes,
+        matches,
+        totalWinningAmount,
+        claimable: true,
+      });
+    }
+
+    return res.status(200).json({
+      status: "success",
+      pendingClaimableTickets: pendingClaimable,
+    });
+
+  } catch (err) {
+    console.error("🔥 Pending Claim Error:", err);
+    return res.status(500).json({
+      status: "error",
+      message: "Server error while fetching pending claim tickets.",
+    });
+  }
+};

@@ -200,8 +200,10 @@ export const manualGenerateWinningNumbers = async (req, res) => {
       selectionTickets = [...priorityTickets, ...normalTickets];
       var caseUsed = 5;
     } else {
-      const randomCase = Math.floor(Math.random() * 4) + 1;
-      caseUsed = randomCase;
+      // const randomCase = Math.floor(Math.random() * 4) + 1;
+      // caseUsed = randomCase;
+      const randomCase =3;
+      caseUsed = 3;
 
       if (randomCase === 1) selectionTickets = [...parsedTickets];
 
@@ -235,45 +237,95 @@ export const manualGenerateWinningNumbers = async (req, res) => {
       }
     };
 
-    for (const tk of selectionTickets) {
-      if (qtyCapacity <= 0) break;
+const isCase3 = caseUsed === 3; // ensure this exists once before the outer loop
 
-      const userMax = Math.floor((tk.totalQuatity * 2) / PRICE);
+for (const tk of selectionTickets) {
+  if (qtyCapacity <= 0) break;
 
-      for (const it of tk.items) {
-        const num = it.ticketNumber;
-        const mergedQty = merged[num] || 0;
-        const prefix = num.substring(0, 2);
+  // Track this ticket's remaining investable points (do not change tk)
+  let remainingInvestment = Number(tk.totalQuatity || 0);
 
-        if (!mergedQty || trash.has(num) || blocked.has(prefix)) continue;
-        if (mergedQty * PRICE > winningPoolOriginal) {
-          trash.add(num);
-          delete merged[num];
-          continue;
-        }
-        if (it.quantity > userMax) {
-          trash.add(num);
-          continue;
-        }
-        if (mergedQty > qtyCapacity) {
-          trash.add(num);
-          continue;
-        }
+  // Keep existing userMax logic (with prior suggested strictness if you added it)
+  let userMax = Math.floor((tk.totalQuatity * 2) / PRICE);
+  if (isCase3) {
+    const strictMax = Math.floor((Number(tk.totalQuatity || 0)) / PRICE);
+    userMax = Math.min(userMax, Math.max(strictMax, 0));
+  }
 
-        selected.push({
-          number: num,
-          quantity: mergedQty,
-          payout: mergedQty * PRICE,
-          fromTicket: tk.id,
-          ticketIds: Array.from(numberToTicketMap[num] || []),
-          ticketCount: (numberToTicketMap[num] || new Set()).size,
-        });
+  for (const it of tk.items) {
+    if (qtyCapacity <= 0) break; // re-check inside loop
 
-        qtyCapacity -= mergedQty;
-        delete merged[num];
-        blockPrefix(prefix);
-      }
+    const num = it.ticketNumber;
+    const mergedQty = merged[num] || 0;
+    const prefix = num.substring(0, 2);
+
+    if (!mergedQty || trash.has(num) || blocked.has(prefix)) continue;
+
+    // Existing pool guard
+    if (mergedQty * PRICE > winningPoolOriginal) {
+      trash.add(num);
+      delete merged[num];
+      continue;
     }
+
+    // Existing user quantity guard
+    if (it.quantity > userMax) {
+      trash.add(num);
+      continue;
+    }
+
+    // NEW: compute how many units we can award for this ticket based on its remaining investment
+    const maxQtyByInvestment = Math.floor(remainingInvestment / PRICE); // how many qty this ticket can still receive
+    // Determine allowedQty by combining all caps
+    const allowedQty = Math.min(
+      mergedQty,
+      userMax,
+      qtyCapacity,
+      Math.max(maxQtyByInvestment, 0) // ensure non-negative
+    );
+
+    if (allowedQty <= 0) {
+      // This ticket cannot accept any payout for this number — trash and continue
+      trash.add(num);
+      delete merged[num];
+      continue;
+    }
+
+    // If allowedQty is less than mergedQty, we still take allowedQty and consume that much investment
+    const payout = allowedQty * PRICE;
+
+    // Final safety: if somehow payout > winningPoolOriginal, trash (keeps original behaviour)
+    if (payout > winningPoolOriginal) {
+      trash.add(num);
+      delete merged[num];
+      continue;
+    }
+
+    // push selection using allowedQty instead of mergedQty
+    selected.push({
+      number: num,
+      quantity: allowedQty,
+      payout: payout,
+      fromTicket: tk.id,
+      ticketIds: Array.from(numberToTicketMap[num] || []),
+      ticketCount: (numberToTicketMap[num] || new Set()).size,
+    });
+
+    // reduce capacities and this ticket's remaining investment
+    qtyCapacity -= allowedQty;
+    remainingInvestment -= payout;
+
+    // remove from merged set so it's not reconsidered
+    delete merged[num];
+
+    // block other numbers with same prefix
+    blockPrefix(prefix);
+
+    // Optional small optimization: if this ticket has no remainingInvestment, break to next ticket
+    if (remainingInvestment <= 0) break;
+  }
+}
+
 
     const finalWinners = [];
     const limit = { "1": 0, "3": 0, "5": 0 };
@@ -289,28 +341,59 @@ export const manualGenerateWinningNumbers = async (req, res) => {
     const purchased = new Set(Object.keys(numberToTicketMap));
     const used = new Set(finalWinners.map((w) => w.number));
 
-    const fillRandom = (prefix) => {
-      while (limit[prefix] < 10) {
-        const mid = Math.floor(Math.random() * 10);
-        const last2 = String(Math.floor(Math.random() * 100)).padStart(2, "0");
-        const num = prefix + mid + last2;
+const lastTwoCount = {};
+const blockedPairs = new Set(); // NEW: block prefix pairs like 52, 53, etc.
 
-        if (purchased.has(num)) continue;
-        if (used.has(num)) continue;
+const fillRandom = (prefix) => {
+  while (limit[prefix] < 10) {
 
-        finalWinners.push({
-          number: num,
-          quantity: 0,
-          payout: 0,
-          fromTicket: null,
-          ticketIds: [],
-          ticketCount: 0,
-        });
+    let attempts = 0;
+    let candidate = null;
 
-        used.add(num);
-        limit[prefix]++;
-      }
-    };
+    while (attempts < 500) {
+
+      // Generate correct 4-digit number (prefix = "1" or "3" or "5")
+      const lastThree = String(Math.floor(Math.random() * 1000)).padStart(3, "0");
+      const num = prefix + lastThree;       // ex: 5123
+      const pair = num.substring(0, 2);     // ex: "51"
+      const last2 = num.slice(-2);          // ex: "23"
+
+      // RULE A: prefix-pair cannot be reused
+      if (blockedPairs.has(pair)) { attempts++; continue; }
+
+      // RULE B: cannot be a purchased ticket
+      if (purchased.has(num)) { attempts++; continue; }
+
+      // RULE C: cannot already be used as a winning number
+      if (used.has(num)) { attempts++; continue; }
+
+      // RULE D: last-two digits must not repeat more than 3 times
+      if ((lastTwoCount[last2] || 0) >= 3) { attempts++; continue; }
+
+      // Accept the number
+      candidate = num;
+      blockedPairs.add(pair);
+      lastTwoCount[last2] = (lastTwoCount[last2] || 0) + 1;
+      break;
+    }
+
+    if (!candidate) continue; // try next
+
+    finalWinners.push({
+      number: candidate,
+      quantity: 0,
+      payout: 0,
+      fromTicket: null,
+      ticketIds: [],
+      ticketCount: 0,
+    });
+
+    used.add(candidate);
+    limit[prefix]++;
+  }
+};
+
+
 
     fillRandom("1");
     fillRandom("3");
