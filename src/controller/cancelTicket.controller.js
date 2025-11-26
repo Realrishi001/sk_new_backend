@@ -77,6 +77,7 @@ function getNextDrawSlotDate() {
 export const getTicketsByDrawTimeForToday = async (req, res) => {
   try {
     const { loginId } = req.body;
+    console.log(loginId);
     if (!loginId)
       return res.status(400).json({ message: "loginId is required" });
 
@@ -88,9 +89,6 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
     console.log(`\n🧾 [TICKET CHECK] Admin ID: ${loginId}`);
     console.log(`📅 Today: ${today}`);
 
-    /* -------------------------------------------------------------
-       FETCH TODAY'S TICKETS
-    ------------------------------------------------------------- */
     const todaysTickets = await tickets.findAll({
       where: {
         loginId,
@@ -107,9 +105,6 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
       return res.json([]);
     }
 
-    /* -------------------------------------------------------------
-       PARSE DRAW TIMES (ALWAYS CLEAN JSON)
-    ------------------------------------------------------------- */
     const parseDrawTime = (dt) => {
       if (!dt) return [];
 
