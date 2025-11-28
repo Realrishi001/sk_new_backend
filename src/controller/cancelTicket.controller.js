@@ -77,113 +77,132 @@ function getNextDrawSlotDate() {
 export const getTicketsByDrawTimeForToday = async (req, res) => {
   try {
     const { loginId } = req.body;
-    console.log(loginId);
     if (!loginId)
       return res.status(400).json({ message: "loginId is required" });
 
-    const today = todayDateStr();
-    const tomorrow = new Date();
-    tomorrow.setDate(new Date().getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split("T")[0];
+    /* ---------------------------------------------------
+       FIX 1: Correct IST Today + Tomorrow
+    --------------------------------------------------- */
+    const now = new Date();
+    const istNow = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
 
-    console.log(`\n🧾 [TICKET CHECK] Admin ID: ${loginId}`);
-    console.log(`📅 Today: ${today}`);
+    const todayStr = istNow.toISOString().split("T")[0]; // YYYY-MM-DD
 
+    const tomorrowIST = new Date(istNow.getTime() + 24 * 60 * 60 * 1000);
+    const tomorrowStr = tomorrowIST.toISOString().split("T")[0];
+
+    console.log("IST TODAY:", todayStr);
+    console.log("IST TOMORROW:", tomorrowStr);
+
+    /* ---------------------------------------------------
+       DB QUERY (IST-safe)
+    --------------------------------------------------- */
     const todaysTickets = await tickets.findAll({
       where: {
         loginId,
         createdAt: {
-          [Op.gte]: `${today} 00:00:00`,
+          [Op.gte]: `${todayStr} 00:00:00`,
           [Op.lt]: `${tomorrowStr} 00:00:00`,
         },
       },
       order: [["createdAt", "ASC"]],
     });
 
-    if (!todaysTickets.length) {
-      console.warn("⚠️ No tickets found for today.");
-      return res.json([]);
-    }
+    if (!todaysTickets.length) return res.json([]);
 
+    /* ---------------------------------------------------
+       FIX 2: Clean & normalize drawTime
+    --------------------------------------------------- */
     const parseDrawTime = (dt) => {
       if (!dt) return [];
 
       try {
-        if (Array.isArray(dt)) return dt;
-        if (typeof dt === "string" && dt.trim().startsWith("[")) {
-          return JSON.parse(dt);
+        if (Array.isArray(dt)) return dt;               // ok
+        if (typeof dt === "string" && dt.startsWith("[")) {
+          return JSON.parse(dt);                       // JSON array string
         }
-        return [dt];
+        return [dt];                                    // fallback (single string)
       } catch {
         return [dt];
       }
     };
 
-    /* -------------------------------------------------------------
-       PARSE TICKET NUMBER (ALWAYS CLEAN JSON)
-    ------------------------------------------------------------- */
+    /* ---------------------------------------------------
+       FIX 3: Properly parse ticketNumber for ANY format
+    --------------------------------------------------- */
     const parseTicketNumber = (tn) => {
+      if (!tn) return [];
+
       try {
-        if (!tn) return [];
+        if (Array.isArray(tn)) return tn;               // already correct array
 
-        if (typeof tn === "string" && tn.trim().startsWith("[")) {
-          return JSON.parse(tn); // [{ticketNumber:"5000", quantity:2}, ...]
+        if (typeof tn === "string") {
+          if (tn.trim().startsWith("[")) {
+            return JSON.parse(tn);                      // JSON array string
+          }
+
+          // fallback "5000:2, 4100:1"
+          return tn.split(",").map((pair) => {
+            const [n, q] = pair.split(":");
+            return {
+              ticketNumber: n?.trim(),
+              quantity: Number(q?.trim()) || 1,
+            };
+          });
         }
+      } catch {}
 
-        if (Array.isArray(tn)) return tn;
-
-        return [];
-      } catch {
-        return [];
-      }
+      return [];
     };
 
-    /* -------------------------------------------------------------
-       GET TARGET SLOT (MATCHES 02:00 PM & 2:00 PM)
-    ------------------------------------------------------------- */
-    const targetSlot = getNextDrawSlot(); // "02:00 PM"
-    const altSlot = targetSlot.replace(/^0/, ""); // "2:00 PM"
+    /* ---------------------------------------------------
+       FIX 4: Normalize "02:00 PM" vs "2:00 PM"
+    --------------------------------------------------- */
+    const normalizeTime = (t) => t.replace(/^0/, "").trim();
 
-    console.log(`🎯 Target Draw Time: ${targetSlot} / ${altSlot}`);
+    const targetSlot = getNextDrawSlot().trim();     // e.g., "02:00 PM"
+    const altSlot = normalizeTime(targetSlot);       // e.g., "2:00 PM"
 
-    /* -------------------------------------------------------------
-       FILTER TICKETS MATCHING DRAW TIME
-    ------------------------------------------------------------- */
+    console.log("TARGET:", targetSlot, "| ALT:", altSlot);
+
+    /* ---------------------------------------------------
+       FILTER TICKETS BASED ON DRAW TIME
+    --------------------------------------------------- */
     const filteredTickets = todaysTickets.filter((t) => {
-      const times = parseDrawTime(t.drawTime);
-      return times.includes(targetSlot) || times.includes(altSlot);
+      const dts = parseDrawTime(t.drawTime).map(normalizeTime);
+
+      return dts.includes(normalizeTime(targetSlot)) ||
+             dts.includes(normalizeTime(altSlot));
     });
 
     if (!filteredTickets.length) {
-      console.log(`⚠️ No tickets found for drawTime: ${targetSlot}`);
+      console.log("No tickets match draw slot");
       return res.json([]);
     }
 
-    console.log(`✅ ${filteredTickets.length} tickets matched draw time.`);
-
-    /* -------------------------------------------------------------
-       CLEAN FINAL RESPONSE FOR FRONTEND
-    ------------------------------------------------------------- */
+    /* ---------------------------------------------------
+       CLEAN FINAL RESPONSE
+    --------------------------------------------------- */
     const finalResponse = [
       {
         drawTime: targetSlot,
-        drawDate: today,
+        drawDate: todayStr,
         tickets: filteredTickets.map((t) => ({
           id: t.id,
           loginId: t.loginId,
-          drawTime: parseDrawTime(t.drawTime), // array
-          ticketNumber: parseTicketNumber(t.ticketNumber), // proper array of objects
-          totalPoints: parseFloat(t.totalPoints),
-          totalQuatity: t.totalQuatity,
+          drawTime: parseDrawTime(t.drawTime),
+          ticketNumber: parseTicketNumber(t.ticketNumber),
+          totalPoints: Number(t.totalPoints || 0),
+          totalQuatity: Number(t.totalQuatity || 0),
           createdAt: t.createdAt,
         })),
       },
     ];
 
     return res.json(finalResponse);
-  } catch (error) {
-    console.error("🔥 Error in getTicketsByDrawTimeForToday:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+  } catch (err) {
+    console.error("🔥 FIXED Controller Error:", err);
+    return res.status(500).json({ message: "Internal Error" });
   }
 };
 
@@ -298,7 +317,6 @@ export const deleteTicketByNumber = async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 };
-
 
 
 /* ---------- Controller 3: Show Today's Cancelled Tickets (using createdAt) ---------- */

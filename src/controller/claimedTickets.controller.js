@@ -644,7 +644,17 @@ export const getPendingClaimTickets = async (req, res) => {
       });
     }
 
-    // 1️⃣ Fetch all claimed ticket IDs
+    const nowUTC = new Date();
+
+    const nowIST = new Date(nowUTC.getTime() + 5.5 * 60 * 60 * 1000);
+    const todayStr = nowIST.toISOString().split("T")[0]; // YYYY-MM-DD
+
+    const tomorrowIST = new Date(nowIST.getTime() + 24 * 60 * 60 * 1000);
+    const tomorrowStr = tomorrowIST.toISOString().split("T")[0];
+
+    console.log("👉 Today IST:", todayStr, "| Tomorrow IST:", tomorrowStr);
+
+
     const claimed = await claimedTickets.findAll({
       where: { loginId },
       attributes: ["TicketId"],
@@ -652,37 +662,41 @@ export const getPendingClaimTickets = async (req, res) => {
 
     const claimedIds = new Set(claimed.map(c => c.TicketId));
 
-    // 2️⃣ Fetch all tickets of this user (excluding claimed)
+
     const userTickets = await tickets.findAll({
       where: {
         loginId,
-        id: { [Op.notIn]: Array.from(claimedIds) }
+        ...(claimedIds.size > 0
+          ? { id: { [Op.notIn]: Array.from(claimedIds) } }
+          : {}),
+
+        createdAt: {
+          [Op.gte]: `${todayStr} 00:00:00`,
+          [Op.lt]: `${tomorrowStr} 00:00:00`,
+        },
       },
-      attributes: ["id", "ticketNumber", "drawTime", "gameTime"]
+      attributes: ["id", "ticketNumber", "drawTime", "gameTime"],
+      order: [["createdAt", "ASC"]],
     });
 
-    if (!userTickets.length) {
+    if (userTickets.length === 0) {
       return res.status(200).json({
         status: "success",
         pendingClaimableTickets: [],
-        message: "No unclaimed tickets found."
+        message: "No unclaimed tickets found for today.",
       });
     }
 
     let pendingClaimable = [];
 
-    // 3️⃣ For every ticket, reuse winning-logic
+
     for (const ticket of userTickets) {
-      const { id, ticketNumber, drawTime, gameTime } = ticket;
+      const { id, ticketNumber, drawTime } = ticket;
 
-      // A) Get draw date
-      let drawDate = "";
-      if (typeof gameTime === "string") {
-        const [d, m, y] = gameTime.split(" ")[0].split("-");
-        drawDate = `${y}-${m}-${d}`;
-      }
+      /* A) TODAY's draw date */
+      const drawDate = todayStr;
 
-      // B) Parse drawTimes
+      /* B) Parse drawTime into array */
       let parsedDrawTimes = [];
       try {
         parsedDrawTimes = Array.isArray(drawTime)
@@ -691,48 +705,47 @@ export const getPendingClaimTickets = async (req, res) => {
       } catch {
         parsedDrawTimes = [drawTime];
       }
-      parsedDrawTimes = parsedDrawTimes
-        .map(normalizeDrawTime)
-        .filter(Boolean);
 
-      // C) Parse ticket numbers
+      /* remove null/empty */
+      parsedDrawTimes = parsedDrawTimes.filter(Boolean);
+
+      /* C) Parse ticket numbers safely */
       let parsedTickets = [];
       try {
         parsedTickets = Array.isArray(ticketNumber)
           ? ticketNumber
           : JSON.parse(ticketNumber);
       } catch {
-        continue; // skip invalid tickets
+        continue;
       }
 
-      // D) Fetch winning rows
       const winningRows = await winningNumbers.findAll({
-        where: { drawDate },
+        where: { drawDate: todayStr },
         attributes: ["winningNumbers", "DrawTime"],
       });
 
-      if (!winningRows.length) continue; // no results yet
+      if (!winningRows.length) continue;
 
-      // E) Build winning set
       const winSet = new Set();
 
+      /* Build winning set */
       for (const row of winningRows) {
-        let rowTimes = [];
+        let times = [];
 
         try {
           const parsed = Array.isArray(row.DrawTime)
             ? row.DrawTime
             : JSON.parse(row.DrawTime);
-          rowTimes = Array.isArray(parsed) ? parsed : [parsed];
+          times = parsed;
         } catch {
-          rowTimes = [row.DrawTime];
+          times = [row.DrawTime];
         }
 
-        rowTimes = rowTimes.map(normalizeDrawTime).filter(Boolean);
+        /* Check if this ticket participated in the draw */
+        const matches = parsedDrawTimes.some(t => times.includes(t));
+        if (!matches) continue;
 
-        const match = parsedDrawTimes.some(t => rowTimes.includes(t));
-        if (!match) continue;
-
+        /* Parse winning numbers */
         let winners = [];
         try {
           winners = Array.isArray(row.winningNumbers)
@@ -745,7 +758,6 @@ export const getPendingClaimTickets = async (req, res) => {
         winners.forEach(w => winSet.add(w.number));
       }
 
-      // F) Compare user numbers vs winners
       const matches = parsedTickets
         .filter(t => winSet.has(t.ticketNumber))
         .map(t => ({
@@ -754,9 +766,12 @@ export const getPendingClaimTickets = async (req, res) => {
           payout: t.quantity * 180,
         }));
 
-      if (matches.length === 0) continue; // not a winner
+      if (matches.length === 0) continue;
 
-      const totalWinningAmount = matches.reduce((sum, m) => sum + m.payout, 0);
+      const totalWinningAmount = matches.reduce(
+        (sum, m) => sum + m.payout,
+        0
+      );
 
       pendingClaimable.push({
         ticketId: id,
@@ -775,6 +790,194 @@ export const getPendingClaimTickets = async (req, res) => {
 
   } catch (err) {
     console.error("🔥 Pending Claim Error:", err);
+    return res.status(500).json({
+      status: "error",
+      message: "Server error while fetching pending claim tickets.",
+    });
+  }
+};
+
+async function getShopNameByLoginId(loginId) {
+  try {
+    const shop = await Admin.findOne({
+      where: { id: loginId },
+      attributes: ["shopName"],  // <-- make sure this column exists
+    });
+
+    return shop?.shopName || "Unknown Shop";
+  } catch (err) {
+    return "Unknown Shop";
+  }
+}
+
+
+export const getAllPendingClaimTickets = async (req, res) => {
+  try {
+    /* ------------------------------------------------------
+       1️⃣ Get Today's Date in IST
+    ------------------------------------------------------ */
+    const nowUTC = new Date();
+    const nowIST = new Date(nowUTC.getTime() + 5.5 * 60 * 60 * 1000);
+
+    const todayStr = nowIST.toISOString().split("T")[0];
+    const tomorrowIST = new Date(nowIST.getTime() + 24 * 60 * 60 * 1000);
+    const tomorrowStr = tomorrowIST.toISOString().split("T")[0];
+
+
+    /* ------------------------------------------------------
+       2️⃣ Get ALL tickets created today
+    ------------------------------------------------------ */
+    const userTickets = await tickets.findAll({
+      where: {
+        createdAt: {
+          [Op.gte]: `${todayStr} 00:00:00`,
+          [Op.lt]: `${tomorrowStr} 00:00:00`,
+        },
+      },
+      attributes: ["id", "loginId", "ticketNumber", "drawTime", "gameTime"],
+      order: [["createdAt", "ASC"]],
+    });
+
+    if (!userTickets.length) {
+      return res.status(200).json({
+        status: "success",
+        pendingClaimableTickets: [],
+        message: "No tickets found for today.",
+      });
+    }
+
+
+    /* ------------------------------------------------------
+       3️⃣ Fetch Already Claimed Tickets Today
+    ------------------------------------------------------ */
+    const claimed = await claimedTickets.findAll({
+      where: {
+        createdAt: {
+          [Op.gte]: `${todayStr} 00:00:00`,
+          [Op.lt]: `${tomorrowStr} 00:00:00`,
+        },
+      },
+      attributes: ["TicketId"],
+    });
+
+    const claimedIds = new Set(claimed.map((c) => c.TicketId));
+
+
+    /* ------------------------------------------------------
+       4️⃣ Process Tickets → Only Unclaimed Winners
+    ------------------------------------------------------ */
+    const pendingClaimable = [];
+
+    for (const ticket of userTickets) {
+      const { id, loginId, ticketNumber, drawTime } = ticket;
+
+      if (claimedIds.has(id)) continue;
+
+      const drawDate = todayStr;
+
+      // Parse drawTime
+      let parsedDrawTimes = [];
+      try {
+        parsedDrawTimes = Array.isArray(drawTime)
+          ? drawTime
+          : JSON.parse(drawTime);
+      } catch {
+        parsedDrawTimes = [drawTime];
+      }
+      parsedDrawTimes = parsedDrawTimes.filter(Boolean);
+
+      // Parse ticket numbers
+      let parsedTickets = [];
+      try {
+        parsedTickets = Array.isArray(ticketNumber)
+          ? ticketNumber
+          : JSON.parse(ticketNumber);
+      } catch {
+        continue;
+      }
+
+      // Fetch today's winning rows
+      const winningRows = await winningNumbers.findAll({
+        where: { drawDate: todayStr },
+        attributes: ["winningNumbers", "DrawTime"],
+      });
+
+      if (!winningRows.length) continue;
+
+      const winSet = new Set();
+
+      // Build winning set
+      for (const row of winningRows) {
+        let times = [];
+        try {
+          const parsed = Array.isArray(row.DrawTime)
+            ? row.DrawTime
+            : JSON.parse(row.DrawTime);
+          times = parsed;
+        } catch {
+          times = [row.DrawTime];
+        }
+
+        const matchTime = parsedDrawTimes.some((t) => times.includes(t));
+        if (!matchTime) continue;
+
+        let winners = [];
+        try {
+          winners = Array.isArray(row.winningNumbers)
+            ? row.winningNumbers
+            : JSON.parse(row.winningNumbers);
+        } catch {
+          winners = [];
+        }
+
+        winners.forEach((w) => winSet.add(w.number));
+      }
+
+      // Compare user ticket vs winning numbers
+      const matches = parsedTickets
+        .filter((t) => winSet.has(t.ticketNumber))
+        .map((t) => ({
+          number: t.ticketNumber,
+          quantity: t.quantity,
+          payout: t.quantity * 180,
+        }));
+
+      if (matches.length === 0) continue;
+
+      // Total amount
+      const totalWinningAmount = matches.reduce(
+        (sum, m) => sum + m.payout,
+        0
+      );
+
+      // Get shop name
+      const shopName = await getShopNameByLoginId(loginId);
+
+
+      /* Final Response Formatting */
+      pendingClaimable.push({
+        ticketId: id,
+        loginId,
+        shopName,              // <-- ADDED HERE
+        drawDate,
+        drawTimes: parsedDrawTimes,
+        matches,
+        totalWinningAmount,
+        claimable: true,
+      });
+    }
+
+
+    /* ------------------------------------------------------
+       5️⃣ Send Final Response
+    ------------------------------------------------------ */
+    return res.status(200).json({
+      status: "success",
+      pendingClaimableTickets: pendingClaimable,
+    });
+
+  } catch (err) {
+    console.error("🔥 All Pending Claim Error:", err);
     return res.status(500).json({
       status: "error",
       message: "Server error while fetching pending claim tickets.",
