@@ -3,7 +3,7 @@ import { getTicketsByDate, saveThreedTicket } from '../controller/threed.control
 
 const router = express.Router();
 
-router.post('/create-threed', saveThreedTicket);
+router.post("/save-threed", saveThreedTicket);
 router.post("/search-threed", getTicketsByDate);
 
 export default router;

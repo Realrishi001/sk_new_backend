@@ -1,30 +1,75 @@
 import { threed } from "../models/threed.model.js";
 import { Op } from "sequelize";
 
-export const saveThreedTicket = async(req, res) =>{
-    try {
-        const {gameTime, loginId, ticketNumbers, range, totalQuantity, totalPoints} = req.body;
+export const saveThreedTicket = async (req, res) => {
+  try {
+    const {
+      gameTime,
+      loginId,
+      ticketNumbers,
+      range,
+      totalQuantity,
+      totalPoints,
+    } = req.body;
 
-        if(!gameTime || !loginId || !ticketNumbers || !range || !totalQuantity || !totalPoints){
-            return res.status(400).json({
-                message : 'All the fields did not recieved to backend',
-            })
-        }
+    // ---------------- VALIDATION ----------------
+    if (!gameTime)
+      return res.status(400).json({ status: "error", message: "gameTime is required" });
 
-        const newThreed = await threed.create({
-            gameTime, loginId, ticketNumbers, range, totalQuantity, totalPoints
-        });
+    if (!loginId)
+      return res.status(400).json({ status: "error", message: "loginId is required" });
 
-        return res.status(201).json({
-            message : "Threed record created successfully",
-            data : newThreed,
-        })
+    if (!ticketNumbers || !Array.isArray(ticketNumbers))
+      return res.status(400).json({
+        status: "error",
+        message: "ticketNumbers must be an array",
+      });
 
-    }catch(error) {
-        console.error("Error saving threed", error);
-        return res.status(500).json({message:"Internal Server Error"});
-    }
-}
+    if (ticketNumbers.length === 0)
+      return res.status(400).json({
+        status: "error",
+        message: "ticketNumbers cannot be empty",
+      });
+
+    if (!range)
+      return res.status(400).json({ status: "error", message: "range is required" });
+
+    if (!totalQuantity)
+      return res.status(400).json({
+        status: "error",
+        message: "totalQuantity is required",
+      });
+
+    if (!totalPoints)
+      return res.status(400).json({
+        status: "error",
+        message: "totalPoints is required",
+      });
+
+    // ---------------- CREATE RECORD ----------------
+    const newTicket = await threed.create({
+      gameTime,
+      loginId,
+      ticketNumbers,
+      range,
+      totalQuantity,
+      totalPoints,
+    });
+
+    return res.status(201).json({
+      status: "success",
+      message: "3D tickets saved successfully!",
+      data: newTicket,
+    });
+
+  } catch (error) {
+    console.error("❌ Error saving 3D tickets:", error);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error while saving 3D tickets.",
+    });
+  }
+};
 
 
 // Helper: get YYYY-MM-DD only (ignore time)
