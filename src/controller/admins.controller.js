@@ -364,7 +364,7 @@ export const updateAdminCommission = async (req, res) => {
 };
 
 export const deleteAdmin = async (req, res) => {
-  const { id } = req.body; 
+  const {  } = req.body; 
   console.log(id);
   if (!id) {
     return res.status(400).json({ error: "Admin id is required." });

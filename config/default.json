@@ -1,12 +1,13 @@
 {
-    "port" : 3306,
-    "mysql": {
-        "host" : "srv1949.hstgr.io",
-        "username" : "u769739621_skilljackpot",
-        "password" : "skillJkpot123@",
-        "database": "u769739621_skilljackpot",
-        "dialect" : "mysql",
-        "logging" : false
-    },
+  "port": 3085,
+  "mysql": {
+    "host": "db.skill-king.in",
+    "username": "admin",
+    "password": "Admin@12345",
+    "database": "SkillKing",
+    "dialect": "mysql",
+    "port": 3306,
+    "logging": false
+  },
     "jwtSecret": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
 }

@@ -1,4 +1,5 @@
 import { addAdminBalance, adminLogin, adminLogout, changeAdminPassword, createAdmin, deleteAdmin, deleteAdminByUserName, getAdminDetails, getAdminUsernamesAndBalance, getAdminUsernamesAndCommissions, getAllAdmins, getAllAdminsStatus, mainAdminLogin, updateAdmin, updateAdminCommission } from '../controller/admins.controller.js';
+import { deleteCommission, deleteBalance } from '../controller/adminDelete.controller.js';
 import express from 'express'
 
 const router = express.Router();
@@ -18,5 +19,8 @@ router.get("/shop-report", getAdminDetails);
 router.post("/change-password", changeAdminPassword);
 router.post("/logout", adminLogout);
 router.get("/get-all-admin-status", getAllAdminsStatus);
+
+router.delete("/delete-commission", deleteCommission);
+router.delete("/delete-balance", deleteBalance);
 
 export default router;

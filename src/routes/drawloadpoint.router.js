@@ -3,7 +3,7 @@ import { getTicketsBySeries, getTicketsBySeriesWithShop, getTicketSummary } from
 
 const router = express.Router();
 
-router.get("/draw-details", getTicketSummary);
+router.post("/draw-details", getTicketSummary);
 router.post("/table-draw-details", getTicketsBySeries);
 router.post("/tickets-by-admin", getTicketsBySeriesWithShop);
 

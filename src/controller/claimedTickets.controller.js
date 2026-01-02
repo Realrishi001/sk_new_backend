@@ -813,9 +813,9 @@ async function getShopNameByLoginId(loginId) {
 
 export const getAllPendingClaimTickets = async (req, res) => {
   try {
-    /* ------------------------------------------------------
-       1️⃣ Get Today's Date in IST
-    ------------------------------------------------------ */
+
+    console.log("i was triggered.")
+
     const nowUTC = new Date();
     const nowIST = new Date(nowUTC.getTime() + 5.5 * 60 * 60 * 1000);
 
@@ -824,9 +824,6 @@ export const getAllPendingClaimTickets = async (req, res) => {
     const tomorrowStr = tomorrowIST.toISOString().split("T")[0];
 
 
-    /* ------------------------------------------------------
-       2️⃣ Get ALL tickets created today
-    ------------------------------------------------------ */
     const userTickets = await tickets.findAll({
       where: {
         createdAt: {
@@ -846,10 +843,6 @@ export const getAllPendingClaimTickets = async (req, res) => {
       });
     }
 
-
-    /* ------------------------------------------------------
-       3️⃣ Fetch Already Claimed Tickets Today
-    ------------------------------------------------------ */
     const claimed = await claimedTickets.findAll({
       where: {
         createdAt: {
