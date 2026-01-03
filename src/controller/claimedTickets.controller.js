@@ -810,12 +810,9 @@ async function getShopNameByLoginId(loginId) {
   }
 }
 
-
-export const getAllPendingClaimTickets = async (req, res) => {
+export const getAllPendingClaimTicketsForAdmins = async (req, res) => {
   try {
-
-    console.log("i was triggered.")
-
+    /* -------------------- IST DATE SETUP -------------------- */
     const nowUTC = new Date();
     const nowIST = new Date(nowUTC.getTime() + 5.5 * 60 * 60 * 1000);
 
@@ -823,157 +820,162 @@ export const getAllPendingClaimTickets = async (req, res) => {
     const tomorrowIST = new Date(nowIST.getTime() + 24 * 60 * 60 * 1000);
     const tomorrowStr = tomorrowIST.toISOString().split("T")[0];
 
+    console.log("👉 Admin Pending Claims | Date:", todayStr);
 
-    const userTickets = await tickets.findAll({
-      where: {
-        createdAt: {
-          [Op.gte]: `${todayStr} 00:00:00`,
-          [Op.lt]: `${tomorrowStr} 00:00:00`,
-        },
-      },
-      attributes: ["id", "loginId", "ticketNumber", "drawTime", "gameTime"],
-      order: [["createdAt", "ASC"]],
+    /* -------------------- FETCH ALL ADMINS -------------------- */
+    const admins = await Admin.findAll({
+      attributes: ["id", "shopName"],
+      where: { blockStatus: false },
     });
 
-    if (!userTickets.length) {
+    if (!admins.length) {
       return res.status(200).json({
         status: "success",
         pendingClaimableTickets: [],
-        message: "No tickets found for today.",
+        message: "No admins found.",
       });
     }
 
-    const claimed = await claimedTickets.findAll({
-      where: {
-        createdAt: {
-          [Op.gte]: `${todayStr} 00:00:00`,
-          [Op.lt]: `${tomorrowStr} 00:00:00`,
+    const finalResult = [];
+
+    /* -------------------- LOOP EACH ADMIN -------------------- */
+    for (const admin of admins) {
+      const loginId = admin.id;
+
+      /* ---- Already claimed tickets ---- */
+      const claimed = await claimedTickets.findAll({
+        where: { loginId },
+        attributes: ["TicketId"],
+      });
+
+      const claimedIds = new Set(claimed.map(c => c.TicketId));
+
+      /* ---- Tickets for today ---- */
+      const userTickets = await tickets.findAll({
+        where: {
+          loginId,
+          ...(claimedIds.size > 0
+            ? { id: { [Op.notIn]: Array.from(claimedIds) } }
+            : {}),
+          createdAt: {
+            [Op.gte]: `${todayStr} 00:00:00`,
+            [Op.lt]: `${tomorrowStr} 00:00:00`,
+          },
         },
-      },
-      attributes: ["TicketId"],
-    });
-
-    const claimedIds = new Set(claimed.map((c) => c.TicketId));
-
-
-    /* ------------------------------------------------------
-       4️⃣ Process Tickets → Only Unclaimed Winners
-    ------------------------------------------------------ */
-    const pendingClaimable = [];
-
-    for (const ticket of userTickets) {
-      const { id, loginId, ticketNumber, drawTime } = ticket;
-
-      if (claimedIds.has(id)) continue;
-
-      const drawDate = todayStr;
-
-      // Parse drawTime
-      let parsedDrawTimes = [];
-      try {
-        parsedDrawTimes = Array.isArray(drawTime)
-          ? drawTime
-          : JSON.parse(drawTime);
-      } catch {
-        parsedDrawTimes = [drawTime];
-      }
-      parsedDrawTimes = parsedDrawTimes.filter(Boolean);
-
-      // Parse ticket numbers
-      let parsedTickets = [];
-      try {
-        parsedTickets = Array.isArray(ticketNumber)
-          ? ticketNumber
-          : JSON.parse(ticketNumber);
-      } catch {
-        continue;
-      }
-
-      // Fetch today's winning rows
-      const winningRows = await winningNumbers.findAll({
-        where: { drawDate: todayStr },
-        attributes: ["winningNumbers", "DrawTime"],
+        attributes: ["id", "ticketNumber", "drawTime"],
+        order: [["createdAt", "ASC"]],
       });
 
-      if (!winningRows.length) continue;
+      if (!userTickets.length) continue;
 
-      const winSet = new Set();
+      const adminPending = [];
 
-      // Build winning set
-      for (const row of winningRows) {
-        let times = [];
+      /* -------------------- PROCESS EACH TICKET -------------------- */
+      for (const ticket of userTickets) {
+        const { id, ticketNumber, drawTime } = ticket;
+
+        /* Parse draw times */
+        let parsedDrawTimes = [];
         try {
-          const parsed = Array.isArray(row.DrawTime)
-            ? row.DrawTime
-            : JSON.parse(row.DrawTime);
-          times = parsed;
+          parsedDrawTimes = Array.isArray(drawTime)
+            ? drawTime
+            : JSON.parse(drawTime);
         } catch {
-          times = [row.DrawTime];
+          parsedDrawTimes = [drawTime];
+        }
+        parsedDrawTimes = parsedDrawTimes.filter(Boolean);
+
+        /* Parse ticket numbers */
+        let parsedTickets = [];
+        try {
+          parsedTickets = Array.isArray(ticketNumber)
+            ? ticketNumber
+            : JSON.parse(ticketNumber);
+        } catch {
+          continue;
         }
 
-        const matchTime = parsedDrawTimes.some((t) => times.includes(t));
-        if (!matchTime) continue;
+        /* Fetch today's winning numbers */
+        const winningRows = await winningNumbers.findAll({
+          where: { drawDate: todayStr },
+          attributes: ["winningNumbers", "DrawTime"],
+        });
 
-        let winners = [];
-        try {
-          winners = Array.isArray(row.winningNumbers)
-            ? row.winningNumbers
-            : JSON.parse(row.winningNumbers);
-        } catch {
-          winners = [];
+        if (!winningRows.length) continue;
+
+        const winSet = new Set();
+
+        for (const row of winningRows) {
+          let times = [];
+          try {
+            times = Array.isArray(row.DrawTime)
+              ? row.DrawTime
+              : JSON.parse(row.DrawTime);
+          } catch {
+            times = [row.DrawTime];
+          }
+
+          const participated = parsedDrawTimes.some(t => times.includes(t));
+          if (!participated) continue;
+
+          let winners = [];
+          try {
+            winners = Array.isArray(row.winningNumbers)
+              ? row.winningNumbers
+              : JSON.parse(row.winningNumbers);
+          } catch {
+            winners = [];
+          }
+
+          winners.forEach(w => winSet.add(w.number));
         }
 
-        winners.forEach((w) => winSet.add(w.number));
+        const matches = parsedTickets
+          .filter(t => winSet.has(t.ticketNumber))
+          .map(t => ({
+            number: t.ticketNumber,
+            quantity: t.quantity,
+            payout: t.quantity * 180,
+          }));
+
+        if (!matches.length) continue;
+
+        const totalWinningAmount = matches.reduce(
+          (sum, m) => sum + m.payout,
+          0
+        );
+
+        adminPending.push({
+          ticketId: id,
+          drawDate: todayStr,
+          drawTimes: parsedDrawTimes,
+          matches,
+          totalWinningAmount,
+          claimable: true,
+        });
       }
 
-      // Compare user ticket vs winning numbers
-      const matches = parsedTickets
-        .filter((t) => winSet.has(t.ticketNumber))
-        .map((t) => ({
-          number: t.ticketNumber,
-          quantity: t.quantity,
-          payout: t.quantity * 180,
-        }));
-
-      if (matches.length === 0) continue;
-
-      // Total amount
-      const totalWinningAmount = matches.reduce(
-        (sum, m) => sum + m.payout,
-        0
-      );
-
-      // Get shop name
-      const shopName = await getShopNameByLoginId(loginId);
-
-
-      /* Final Response Formatting */
-      pendingClaimable.push({
-        ticketId: id,
-        loginId,
-        shopName,              // <-- ADDED HERE
-        drawDate,
-        drawTimes: parsedDrawTimes,
-        matches,
-        totalWinningAmount,
-        claimable: true,
-      });
+      if (adminPending.length) {
+        finalResult.push({
+          adminId: admin.id,
+          shopName: admin.shopName,
+          pendingClaimableTickets: adminPending,
+        });
+      }
     }
 
-
-    /* ------------------------------------------------------
-       5️⃣ Send Final Response
-    ------------------------------------------------------ */
+    /* -------------------- RESPONSE -------------------- */
     return res.status(200).json({
       status: "success",
-      pendingClaimableTickets: pendingClaimable,
+      date: todayStr,
+      adminsWithPendingClaims: finalResult,
     });
 
   } catch (err) {
-    console.error("🔥 All Pending Claim Error:", err);
+    console.error("🔥 Admin Pending Claim Error:", err);
     return res.status(500).json({
       status: "error",
-      message: "Server error while fetching pending claim tickets.",
+      message: "Server error while fetching admin pending claims.",
     });
   }
 };
