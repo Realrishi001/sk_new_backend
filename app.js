@@ -25,6 +25,8 @@ import topSellerRouter from './src/routes/topSeller.router.js'
 import priorWinningRouter from './src/routes/priorWinning.router.js'
 import accountRouter from './src/routes/account.router.js'
 import threedWinningRouter from './src/routes/threedwinning.router.js'
+import threedAccountRouter from './src/routes/threedaccount.router.js'
+import threedCancelledTicketRouter from './src/routes/3dcancelledticket.router.js'
 
 import "./src/schedular/autoDrawScheduler.js"
 
@@ -83,6 +85,8 @@ app.use("/api", topSellerRouter);
 app.use("/api", priorWinningRouter);
 app.use("/api", accountRouter);
 app.use("/api", threedWinningRouter);
+app.use("/api", threedAccountRouter);
+app.use("/api", threedCancelledTicketRouter);
 
 app.listen(port, ()=> {
     console.log(`Server is running on port ${port}`);

@@ -2,6 +2,7 @@ import { Op } from "sequelize";
 import { sequelizeCon } from "../init/dbConnection.js";
 import Admin from "../models/admins.model.js";
 import { tickets } from "../models/ticket.model.js";
+import { threed } from "../models/threed.model.js";
 
 // Function to parse the ticket number string into a clean JSON format
 const parseTicketNumberString = (ticketNumberStr) => {
@@ -326,6 +327,99 @@ export const subtractAdminBalance = async (req, res) => {
       success: false,
       message: "Server error while subtracting balance.",
       error: error.message,
+    });
+  }
+};
+
+
+export const getPrinted3DTickets = async (req, res) => {
+  try {
+    const { loginId } = req.body;
+
+    if (!loginId) {
+      return res.status(400).json({
+        message: "loginId (adminId) is required",
+      });
+    }
+
+    const today = todayDateStrIST();
+
+    const tomorrow = new Date(new Date().getTime() + 24 * 60 * 60 * 1000);
+    const tomorrowStr = new Date(
+      tomorrow.getTime() + 5.5 * 60 * 60 * 1000
+    )
+      .toISOString()
+      .split("T")[0];
+
+    const todays3DTickets = await threed.findAll({
+      where: {
+        loginId,
+        createdAt: {
+          [Op.gte]: `${today} 00:00:00`,
+          [Op.lt]: `${tomorrowStr} 00:00:00`,
+        },
+      },
+      attributes: [
+        "id",
+        "gameTime",
+        "ticketNumbers",
+        "totalPoints",
+        "totalQuantity",
+        "range",
+        "createdAt",
+      ],
+      order: [["id", "DESC"]],
+    });
+
+    if (!todays3DTickets.length) {
+      return res.status(200).json({
+        message: "No 3D tickets found for today",
+        data: [],
+      });
+    }
+
+    const result = todays3DTickets.map((t) => {
+      let gameDate = "";
+      let gameTime = "";
+
+      if (t.gameTime) {
+        const dateObj = new Date(t.gameTime);
+        gameDate = dateObj.toISOString().split("T")[0];
+        gameTime = dateObj.toTimeString().split(" ")[0];
+      }
+
+      let parsedTicketNumbers = [];
+
+      if (Array.isArray(t.ticketNumbers)) {
+        parsedTicketNumbers = t.ticketNumbers;
+      } else if (typeof t.ticketNumbers === "string") {
+        try {
+          parsedTicketNumbers = JSON.parse(t.ticketNumbers);
+        } catch {
+          parsedTicketNumbers = [];
+        }
+      }
+
+      return {
+        ticketNo: t.id,
+        gameDate,
+        gameTime,
+        ticketNumbers: parsedTicketNumbers,
+        range: t.range,                 // ✅ NOW INCLUDED
+        totalQuantity: t.totalQuantity, // ✅ NOW CONFIRMED
+        totalPoints: t.totalPoints,
+      };
+    });
+
+    return res.status(200).json({
+      message: "success",
+      date: today,
+      data: result,
+    });
+  } catch (err) {
+    console.error("🔥 Error fetching today's 3D tickets:", err);
+    return res.status(500).json({
+      message: "Internal server error",
     });
   }
 };
