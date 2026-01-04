@@ -86,53 +86,55 @@ export const getTicketsByDrawTime = async (req, res) => {
   try {
     const { drawTime } = req.body;
 
-    if (!drawTime) {
-      return res.status(400).json({
-        message: "drawTime is required",
-      });
-    }
+    const getISTDate = () => {
+      const now = new Date();
+      const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+      return ist.toISOString().split("T")[0];
+    };
 
-    const normalizedDrawTime = formatDrawTime(drawTime);
-    const currentDate = new Date().toISOString().split("T")[0];
+    const normalizeTime = (t) =>
+      String(t).replace(/['"]+/g, "").trim();
 
-    // 🔍 Fetch GLOBAL winning result (no adminId required)
-    const existingResult = await winningNumbers.findOne({
-      where: {
-        DrawTime: normalizedDrawTime,
-        drawDate: currentDate,
-      },
+    const currentDate = getISTDate();
+
+    const records = await winningNumbers.findAll({
+      where: { drawDate: currentDate },
+      order: [["createdAt", "DESC"]],
     });
 
-    if (!existingResult) {
-      return res.status(404).json({
-        message: `No winning numbers found for ${normalizedDrawTime} on ${currentDate}.`,
+    if (!records.length) {
+      return res.status(200).json({
+        message: "No winning numbers found",
+        selectedTickets: [],
       });
     }
 
-    const storedNumbers =
-      typeof existingResult.winningNumbers === "string"
-        ? JSON.parse(existingResult.winningNumbers)
-        : existingResult.winningNumbers;
+    let record = records[0];
+    if (drawTime) {
+      const match = records.find(
+        r => normalizeTime(r.DrawTime) === normalizeTime(drawTime)
+      );
+      if (match) record = match;
+    }
+
+    const numbers =
+      typeof record.winningNumbers === "string"
+        ? JSON.parse(record.winningNumbers)
+        : record.winningNumbers;
 
     return res.status(200).json({
-      message: "Winning numbers retrieved successfully.",
-      drawTime: normalizedDrawTime,
-      drawDate: currentDate,
-      totalPoints: existingResult.totalPoints,
-      selectedTickets: storedNumbers,
-      sumOfSelected: storedNumbers.reduce(
-        (sum, t) => sum + Number(t.value || 0),
-        0
-      ),
+      drawDate: record.drawDate,
+      drawTime: record.DrawTime,
+      selectedTickets: numbers,
+      totalPoints: record.totalPoints,
     });
+
   } catch (err) {
-    console.error("🔥 Error fetching winning numbers:", err);
-    return res.status(500).json({
-      message: "Server error",
-      error: err.message,
-    });
+    console.error("🔥 Error:", err);
+    return res.status(500).json({ message: "Server error" });
   }
 };
+
 
 
 
