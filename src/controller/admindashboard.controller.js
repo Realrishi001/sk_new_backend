@@ -6,14 +6,18 @@ import { cancelledTickets } from "../models/cancelledTicket.model.js";
 import { claimedTickets } from "../models/claimedTickets.model.js";
 import { winningNumbers } from "../models/winningNumbers.model.js";
 
+
 export const getAdminCount = async (req, res) => {
   try {
+    /* ---------- TODAY DATE ---------- */
+    const today = new Date().toISOString().split("T")[0];
+
     /* ---------- BASIC COUNTS ---------- */
     const totalAdmins = await Admin.count();
     const totalTickets = await tickets.count();
     const totalCancelledTickets = await cancelledTickets.count();
 
-    /* ---------- FETCH ACTIVE ADMINS ---------- */
+    /* ---------- ACTIVE ADMINS ---------- */
     const admins = await Admin.findAll({
       attributes: ["id"],
       where: { blockStatus: false },
@@ -26,101 +30,98 @@ export const getAdminCount = async (req, res) => {
         totalTickets,
         totalCancelledTickets,
         pendingClaimTickets: 0,
+        pendingClaimAmount: 0,
       });
     }
 
     let pendingClaimTickets = 0;
+    let pendingClaimAmount = 0;
+
+    /* ---------- FETCH TODAY WINNING NUMBERS ---------- */
+    const winningRows = await winningNumbers.findAll({
+      where: { drawDate: today },
+      attributes: ["winningNumbers", "DrawTime"],
+    });
+
+    if (!winningRows.length) {
+      return res.status(200).json({
+        success: true,
+        totalAdmins,
+        totalTickets,
+        totalCancelledTickets,
+        pendingClaimTickets: 0,
+        pendingClaimAmount: 0,
+      });
+    }
+
+    /* ---------- BUILD WINNING NUMBER SET ---------- */
+    const winningSet = new Set();
+
+    for (const row of winningRows) {
+      let winners = [];
+      try {
+        winners = Array.isArray(row.winningNumbers)
+          ? row.winningNumbers
+          : JSON.parse(row.winningNumbers);
+      } catch {
+        winners = [];
+      }
+
+      winners.forEach(w => winningSet.add(w.number));
+    }
 
     /* ---------- LOOP ADMINS ---------- */
     for (const admin of admins) {
       const loginId = admin.id;
 
-      /* Already claimed tickets */
+      /* ---------- ALREADY CLAIMED ---------- */
       const claimed = await claimedTickets.findAll({
         where: { loginId },
         attributes: ["TicketId"],
       });
+
       const claimedIds = new Set(claimed.map(c => c.TicketId));
 
-      /* All unclaimed tickets (NO DATE FILTER) */
+      /* ---------- TODAY UNCLAIMED TICKETS ---------- */
       const userTickets = await tickets.findAll({
         where: {
           loginId,
+          createdAt: {
+            [Op.gte]: new Date(`${today}T00:00:00.000Z`),
+            [Op.lt]: new Date(`${today}T23:59:59.999Z`),
+          },
           ...(claimedIds.size
             ? { id: { [Op.notIn]: Array.from(claimedIds) } }
             : {}),
         },
-        attributes: ["id", "ticketNumber", "drawTime", "createdAt"],
+        attributes: ["ticketNumber", "drawTime"],
       });
 
-      for (const ticket of userTickets) {
-        /* Parse draw times */
-        let parsedDrawTimes = [];
-        try {
-          parsedDrawTimes = Array.isArray(ticket.drawTime)
-            ? ticket.drawTime
-            : JSON.parse(ticket.drawTime);
-        } catch {
-          parsedDrawTimes = [ticket.drawTime];
-        }
+      if (!userTickets.length) continue;
 
-        /* Parse ticket numbers */
-        let parsedTickets = [];
+      /* ---------- CHECK EACH TICKET ---------- */
+      for (const ticket of userTickets) {
+        let ticketNumbers = [];
+
         try {
-          parsedTickets = Array.isArray(ticket.ticketNumber)
+          ticketNumbers = Array.isArray(ticket.ticketNumber)
             ? ticket.ticketNumber
             : JSON.parse(ticket.ticketNumber);
         } catch {
           continue;
         }
 
-        /* Determine ticket draw date */
-        const ticketDate = ticket.createdAt
-          .toISOString()
-          .split("T")[0];
+        /* ---------- MATCH NUMBERS ---------- */
+        for (const t of ticketNumbers) {
+          if (winningSet.has(t.ticketNumber)) {
+            pendingClaimTickets++;
 
-        /* Fetch winning numbers for that date */
-        const winningRows = await winningNumbers.findAll({
-          where: { drawDate: ticketDate },
-          attributes: ["winningNumbers", "DrawTime"],
-        });
+            const quantity = Number(t.quantity) || 0;
+            pendingClaimAmount += quantity * 180;
 
-        if (!winningRows.length) continue;
-
-        const winSet = new Set();
-
-        for (const row of winningRows) {
-          let rowTimes = [];
-          try {
-            rowTimes = Array.isArray(row.DrawTime)
-              ? row.DrawTime
-              : JSON.parse(row.DrawTime);
-          } catch {
-            rowTimes = [row.DrawTime];
+            break; // count one ticket once
           }
-
-          const participated = parsedDrawTimes.some(t =>
-            rowTimes.includes(t)
-          );
-          if (!participated) continue;
-
-          let winners = [];
-          try {
-            winners = Array.isArray(row.winningNumbers)
-              ? row.winningNumbers
-              : JSON.parse(row.winningNumbers);
-          } catch {
-            winners = [];
-          }
-
-          winners.forEach(w => winSet.add(w.number));
         }
-
-        const hasWinningMatch = parsedTickets.some(t =>
-          winSet.has(t.ticketNumber)
-        );
-
-        if (hasWinningMatch) pendingClaimTickets++;
       }
     }
 
@@ -131,13 +132,14 @@ export const getAdminCount = async (req, res) => {
       totalTickets,
       totalCancelledTickets,
       pendingClaimTickets,
+      pendingClaimAmount,
     });
 
   } catch (error) {
     console.error("🔥 Admin Count Error:", error);
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch admin counts.",
+      message: "Failed to fetch admin counts",
       error: error.message,
     });
   }

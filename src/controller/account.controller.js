@@ -1,6 +1,7 @@
 import { Op } from "sequelize";
 import Admin from "../models/admins.model.js";
 import { tickets } from "../models/ticket.model.js";
+import { claimedTickets } from "../models/claimedTickets.model.js";
 
 export const getSummaryReport = async (req, res) => {
   try {
@@ -12,18 +13,18 @@ export const getSummaryReport = async (req, res) => {
         message: "from, to, loginId are required",
       });
     }
-    // Build full-day date range so "from" == "to" covers whole day
+
+    /* ---------- DATE RANGE ---------- */
     const startDate = new Date(from);
     startDate.setHours(0, 0, 0, 0);
 
     const endDate = new Date(to);
     endDate.setHours(23, 59, 59, 999);
 
-
-
+    /* ---------- ADMIN ---------- */
     const adminData = await Admin.findOne({
       where: { id: loginId },
-      attributes: ["shopName", "userName"],
+      attributes: ["shopName", "userName", "commission"],
     });
 
     if (!adminData) {
@@ -33,43 +34,73 @@ export const getSummaryReport = async (req, res) => {
       });
     }
 
+    /* ---------- TICKETS (FOR PLAY AMOUNT) ---------- */
     const ticketList = await tickets.findAll({
       where: {
-        loginId: loginId,
-createdAt: {
-  [Op.between]: [startDate, endDate],
-},
-
+        loginId,
+        createdAt: {
+          [Op.between]: [startDate, endDate],
+        },
       },
+      attributes: ["totalQuatity"],
     });
 
-    let playPoints = 0;
-    let winningPoints = 0;
-    let commission = 0;
-
+    let totalQuantity = 0;
     for (const t of ticketList) {
-      const qty = parseInt(t.totalQuatity) || 0;
-      const tp = parseInt(t.totalPoints) || 0;
-
-      const rowPlay = qty * 2;
-      const rowCommission = rowPlay - tp;
-
-      playPoints += rowPlay;
-      winningPoints += tp;
-      commission += rowCommission;
+      totalQuantity += Number(t.totalQuatity) || 0;
     }
 
-    const netPoints = winningPoints - commission;
+    /* ---------- PLAY AMOUNT ---------- */
+    const playAmount = totalQuantity * 2;
 
+    /* ---------- CLAIMED TICKETS (FOR WINNING AMOUNT) ---------- */
+    const claimedList = await claimedTickets.findAll({
+      where: {
+        loginId,
+        claimedDate: {
+          [Op.between]: [from, to],
+        },
+      },
+      attributes: ["ticketNumbers"],
+    });
+
+    let winningAmount = 0;
+
+    for (const ct of claimedList) {
+      let numbers = [];
+      try {
+        numbers = Array.isArray(ct.ticketNumbers)
+          ? ct.ticketNumbers
+          : JSON.parse(ct.ticketNumbers);
+      } catch {
+        numbers = [];
+      }
+
+      for (const n of numbers) {
+        const qty = Number(n.quantity) || 0;
+        winningAmount += qty * 180; // ✅ FIXED RULE
+      }
+    }
+
+    /* ---------- COMMISSION ---------- */
+    const commissionPercent = Number(adminData.commission) || 0;
+    const commissionAmount = Math.round(
+      (playAmount * commissionPercent) / 100
+    );
+
+    /* ---------- NET AMOUNT ---------- */
+    const netAmount = playAmount - commissionAmount - winningAmount;
+
+    /* ---------- RESPONSE ---------- */
     return res.json({
       status: true,
       summary: {
         shopName: adminData.shopName,
         userName: adminData.userName,
-        playPoints: parseInt(playPoints),
-        winningPoints: parseInt(winningPoints),
-        commission: parseInt(commission),
-        netPoints: parseInt(netPoints),
+        playAmount,
+        winningAmount,
+        commission: commissionAmount,
+        netAmount,
         totalTickets: ticketList.length,
       },
     });
@@ -85,27 +116,29 @@ createdAt: {
 };
 
 
+
 export const netToPaySummary = async (req, res) => {
   try {
     const { from, to, loginId } = req.body;
-    
-        if (!from || !to || !loginId) {
-          return res.status(400).json({
-            status: false,
-            message: "from, to, loginId are required",
-          });
-        }
-    // Build full-day date range so "from" == "to" covers whole day
+
+    if (!from || !to || !loginId) {
+      return res.status(400).json({
+        status: false,
+        message: "from, to, loginId are required",
+      });
+    }
+
+    /* ---------- DATE RANGE ---------- */
     const startDate = new Date(from);
     startDate.setHours(0, 0, 0, 0);
 
     const endDate = new Date(to);
     endDate.setHours(23, 59, 59, 999);
 
-
+    /* ---------- ADMIN ---------- */
     const adminData = await Admin.findOne({
       where: { id: loginId },
-      attributes: ["shopName", "userName"],
+      attributes: ["shopName", "userName", "commission"],
     });
 
     if (!adminData) {
@@ -115,45 +148,77 @@ export const netToPaySummary = async (req, res) => {
       });
     }
 
+    /* ---------- TICKETS (FOR PLAY POINTS) ---------- */
     const ticketList = await tickets.findAll({
       where: {
-        loginId: loginId,
+        loginId,
         createdAt: {
-            [Op.between]: [startDate, endDate],
-          },
+          [Op.between]: [startDate, endDate],
+        },
       },
+      attributes: ["totalQuatity"],
     });
 
-    let playPoints = 0;
-    let purchasePoints = 0;
-    let winningPoints = 0;
-    let commission = 0;
-
+    let totalQuantity = 0;
     for (const t of ticketList) {
-      const qty = parseInt(t.totalQuatity) || 0;
-      const tp = parseInt(t.totalPoints) || 0;
-
-      const rowPlay = qty * 2;
-      const rowCommission = rowPlay - tp;
-
-      playPoints += rowPlay;
-      purchasePoints += tp;
-      winningPoints += tp; // same column
-      commission += rowCommission;
+      totalQuantity += Number(t.totalQuatity) || 0;
     }
 
-    const netToPay = purchasePoints - winningPoints; // your requested logic
+    /* ---------- PLAY POINTS ---------- */
+    const playPoints = totalQuantity * 2;
 
+    /* ---------- COMMISSION ---------- */
+    const commissionPercent = Number(adminData.commission) || 0;
+    const commission = Math.round(
+      (playPoints * commissionPercent) / 100
+    );
+
+    /* ---------- PURCHASE POINTS ---------- */
+    const purchasePoints = playPoints - commission;
+
+    /* ---------- CLAIMED TICKETS (FOR WINNING POINTS) ---------- */
+    const claimedList = await claimedTickets.findAll({
+      where: {
+        loginId,
+        claimedDate: {
+          [Op.between]: [from, to],
+        },
+      },
+      attributes: ["ticketNumbers"],
+    });
+
+    let winningPoints = 0;
+
+    for (const ct of claimedList) {
+      let numbers = [];
+      try {
+        numbers = Array.isArray(ct.ticketNumbers)
+          ? ct.ticketNumbers
+          : JSON.parse(ct.ticketNumbers);
+      } catch {
+        numbers = [];
+      }
+
+      for (const n of numbers) {
+        const qty = Number(n.quantity) || 0;
+        winningPoints += qty * 180; // ✅ FINAL RULE
+      }
+    }
+
+    /* ---------- NET TO PAY ---------- */
+    const netToPay = purchasePoints - winningPoints;
+
+    /* ---------- RESPONSE ---------- */
     return res.json({
       status: true,
       summary: {
         shopName: adminData.shopName,
         userName: adminData.userName,
-        playPoints: parseInt(playPoints),
-        purchasePoints: parseInt(purchasePoints),
-        winningPoints: parseInt(winningPoints),
-        commission: parseInt(commission),
-        netToPay: parseInt(netToPay),
+        playPoints,
+        purchasePoints,
+        winningPoints,
+        commission,
+        netToPay,
         totalTickets: ticketList.length,
       },
     });
