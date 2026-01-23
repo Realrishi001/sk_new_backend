@@ -77,71 +77,85 @@ function getNextDrawSlotDate() {
 export const getTicketsByDrawTimeForToday = async (req, res) => {
   try {
     const { loginId } = req.body;
-    if (!loginId)
+
+    if (!loginId) {
       return res.status(400).json({ message: "loginId is required" });
+    }
 
     /* ---------------------------------------------------
-       FIX 1: Correct IST Today + Tomorrow
+       STEP 1: IST DAY RANGE → UTC (PRODUCTION SAFE)
     --------------------------------------------------- */
-    const now = new Date();
-    const istNow = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    const nowUTC = new Date();
 
-    const todayStr = istNow.toISOString().split("T")[0]; // YYYY-MM-DD
+    // IST start of today
+    const istStart = new Date(
+      nowUTC.getFullYear(),
+      nowUTC.getMonth(),
+      nowUTC.getDate(),
+      0, 0, 0
+    );
 
-    const tomorrowIST = new Date(istNow.getTime() + 24 * 60 * 60 * 1000);
-    const tomorrowStr = tomorrowIST.toISOString().split("T")[0];
+    // IST start of tomorrow
+    const istEnd = new Date(
+      nowUTC.getFullYear(),
+      nowUTC.getMonth(),
+      nowUTC.getDate() + 1,
+      0, 0, 0
+    );
 
-    console.log("IST TODAY:", todayStr);
-    console.log("IST TOMORROW:", tomorrowStr);
+    // Convert IST → UTC
+    const startUTC = new Date(istStart.getTime() - 5.5 * 60 * 60 * 1000);
+    const endUTC   = new Date(istEnd.getTime()   - 5.5 * 60 * 60 * 1000);
+
+    console.log("🕒 UTC RANGE:", startUTC, "→", endUTC);
 
     /* ---------------------------------------------------
-       DB QUERY (IST-safe)
+       STEP 2: FETCH TODAY'S TICKETS (UTC SAFE)
     --------------------------------------------------- */
     const todaysTickets = await tickets.findAll({
       where: {
         loginId,
         createdAt: {
-          [Op.gte]: `${todayStr} 00:00:00`,
-          [Op.lt]: `${tomorrowStr} 00:00:00`,
+          [Op.gte]: startUTC,
+          [Op.lt]: endUTC,
         },
       },
       order: [["createdAt", "ASC"]],
     });
 
+    console.log("🎟️ Tickets found:", todaysTickets.length);
+
     if (!todaysTickets.length) return res.json([]);
 
     /* ---------------------------------------------------
-       FIX 2: Clean & normalize drawTime
+       STEP 3: SAFE PARSERS (NO SILENT FAILURES)
     --------------------------------------------------- */
     const parseDrawTime = (dt) => {
       if (!dt) return [];
 
       try {
-        if (Array.isArray(dt)) return dt;               // ok
-        if (typeof dt === "string" && dt.startsWith("[")) {
-          return JSON.parse(dt);                       // JSON array string
+        if (Array.isArray(dt)) return dt;
+        if (typeof dt === "string" && dt.trim().startsWith("[")) {
+          return JSON.parse(dt);
         }
-        return [dt];                                    // fallback (single string)
-      } catch {
         return [dt];
+      } catch (err) {
+        console.error("❌ drawTime parse error:", dt);
+        return [];
       }
     };
 
-    /* ---------------------------------------------------
-       FIX 3: Properly parse ticketNumber for ANY format
-    --------------------------------------------------- */
     const parseTicketNumber = (tn) => {
       if (!tn) return [];
 
       try {
-        if (Array.isArray(tn)) return tn;               // already correct array
+        if (Array.isArray(tn)) return tn;
 
         if (typeof tn === "string") {
           if (tn.trim().startsWith("[")) {
-            return JSON.parse(tn);                      // JSON array string
+            return JSON.parse(tn);
           }
 
-          // fallback "5000:2, 4100:1"
           return tn.split(",").map((pair) => {
             const [n, q] = pair.split(":");
             return {
@@ -150,43 +164,45 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
             };
           });
         }
-      } catch {}
+      } catch (err) {
+        console.error("❌ ticketNumber parse error:", tn);
+      }
 
       return [];
     };
 
     /* ---------------------------------------------------
-       FIX 4: Normalize "02:00 PM" vs "2:00 PM"
+       STEP 4: DRAW SLOT (FORCED IST)
     --------------------------------------------------- */
     const normalizeTime = (t) => t.replace(/^0/, "").trim();
 
-    const targetSlot = getNextDrawSlot().trim();     // e.g., "02:00 PM"
-    const altSlot = normalizeTime(targetSlot);       // e.g., "2:00 PM"
+    const nowIST = new Date(nowUTC.getTime() + 5.5 * 60 * 60 * 1000);
+    const targetSlot = getNextDrawSlot(nowIST).trim();
+    const altSlot = normalizeTime(targetSlot);
 
-    console.log("TARGET:", targetSlot, "| ALT:", altSlot);
+    console.log("🎯 TARGET SLOT:", targetSlot);
 
     /* ---------------------------------------------------
-       FILTER TICKETS BASED ON DRAW TIME
+       STEP 5: FILTER BY DRAW TIME
     --------------------------------------------------- */
     const filteredTickets = todaysTickets.filter((t) => {
       const dts = parseDrawTime(t.drawTime).map(normalizeTime);
-
-      return dts.includes(normalizeTime(targetSlot)) ||
-             dts.includes(normalizeTime(altSlot));
+      return dts.includes(targetSlot) || dts.includes(altSlot);
     });
 
-    if (!filteredTickets.length) {
-      console.log("No tickets match draw slot");
-      return res.json([]);
-    }
+    console.log("✅ Matching tickets:", filteredTickets.length);
+
+    if (!filteredTickets.length) return res.json([]);
 
     /* ---------------------------------------------------
-       CLEAN FINAL RESPONSE
+       STEP 6: FINAL RESPONSE (FRONTEND SAFE)
     --------------------------------------------------- */
+    const todayISTStr = nowIST.toISOString().split("T")[0];
+
     const finalResponse = [
       {
         drawTime: targetSlot,
-        drawDate: todayStr,
+        drawDate: todayISTStr,
         tickets: filteredTickets.map((t) => ({
           id: t.id,
           loginId: t.loginId,
@@ -200,11 +216,13 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
     ];
 
     return res.json(finalResponse);
+
   } catch (err) {
-    console.error("🔥 FIXED Controller Error:", err);
-    return res.status(500).json({ message: "Internal Error" });
+    console.error("🔥 Controller Error:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
+
 
 
 /* ---------- Controller 2: Cancel Ticket by Ticket Number ---------- */

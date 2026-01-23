@@ -10,21 +10,53 @@ export const getActive3DTickets = async (req, res) => {
       return res.status(400).json({ message: "loginId is required" });
     }
 
+    /* ---------------------------------------------------
+       STEP 1: IST NOW → LAST 15 MINUTES → UTC
+    --------------------------------------------------- */
+    const nowUTC = new Date();
+
+    // Convert to IST
+    const nowIST = new Date(nowUTC.getTime() + 5.5 * 60 * 60 * 1000);
+
+    // IST time 15 minutes ago
+    const fifteenMinAgoIST = new Date(nowIST.getTime() - 15 * 60 * 1000);
+
+    // Convert back to UTC for DB query
+    const startUTC = new Date(fifteenMinAgoIST.getTime() - 5.5 * 60 * 60 * 1000);
+    const endUTC   = nowUTC;
+
+    console.log("🕒 3D UTC RANGE:", startUTC, "→", endUTC);
+
+    /* ---------------------------------------------------
+       STEP 2: FETCH ACTIVE 3D TICKETS (UTC SAFE)
+    --------------------------------------------------- */
     const tickets = await threed.findAll({
-      where: { loginId },
+      where: {
+        loginId,
+        createdAt: {
+          [Op.gte]: startUTC,
+          [Op.lte]: endUTC,
+        },
+      },
       order: [["id", "DESC"]],
     });
 
+    console.log("🎟️ Active 3D tickets:", tickets.length);
+
+    /* ---------------------------------------------------
+       STEP 3: RESPONSE (FRONTEND SAFE)
+    --------------------------------------------------- */
     return res.json([
       {
         tickets,
       },
     ]);
   } catch (err) {
-    console.error("Get Active 3D Tickets Error:", err);
+    console.error("🔥 Get Active 3D Tickets Error:", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 export const cancel3DTicket = async (req, res) => {
   try {
