@@ -46,8 +46,6 @@ export const savePrintedTickets = async (req, res) => {
       drawTime,
     } = req.body;
 
-    console.log("🧾 Incoming Ticket Data:", req.body);
-
     // --- Validation ---
     if (!Array.isArray(drawTime) || drawTime.length === 0) {
       await t.rollback();
@@ -56,7 +54,6 @@ export const savePrintedTickets = async (req, res) => {
         .json({ message: "drawTime must be a non-empty array." });
     }
 
-    console.log("🎯 Raw drawTime received:", JSON.stringify(drawTime, null, 2));
 
     // Normalize nested drawTime arrays
     let normalizedDrawTimes = [];

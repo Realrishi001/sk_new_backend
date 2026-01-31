@@ -53,6 +53,19 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({extended: true}));
 
+// Request Logger Middleware
+app.use((req, res, next) => {
+    if (req.originalUrl.startsWith('/api')) {
+        console.log(
+            `[${new Date().toISOString()}]`,
+            req.method,
+            req.originalUrl
+        );
+    }
+    next();
+});
+
+
 app.get('/', (req, res) => {
     res.status(200).json({
         message : "Hello, developer. You've reached the API. It's been waiting.",

@@ -4,7 +4,6 @@ import { sequelizeCon } from "../init/dbConnection.js";
 import { Op } from "sequelize";
 import Admin from "../models/admins.model.js";
 
-/* ---------- Helpers ---------- */
 
 // Get today's date (YYYY-MM-DD)
 function todayDateStr() {
@@ -74,6 +73,7 @@ function getNextDrawSlotDate() {
   return now;
 }
 
+
 export const getTicketsByDrawTimeForToday = async (req, res) => {
   try {
     const { loginId } = req.body;
@@ -83,41 +83,26 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
     }
 
     /* ---------------------------------------------------
-       STEP 1: IST DAY RANGE → UTC (PRODUCTION SAFE)
+       STEP 1: TODAY RANGE (UTC — PRODUCTION SAFE)
+       DB stores timestamps in UTC → query in UTC
     --------------------------------------------------- */
-    const nowUTC = new Date();
+    const startUTC = new Date();
+    startUTC.setUTCHours(0, 0, 0, 0);
 
-    // IST start of today
-    const istStart = new Date(
-      nowUTC.getFullYear(),
-      nowUTC.getMonth(),
-      nowUTC.getDate(),
-      0, 0, 0
-    );
-
-    // IST start of tomorrow
-    const istEnd = new Date(
-      nowUTC.getFullYear(),
-      nowUTC.getMonth(),
-      nowUTC.getDate() + 1,
-      0, 0, 0
-    );
-
-    // Convert IST → UTC
-    const startUTC = new Date(istStart.getTime() - 5.5 * 60 * 60 * 1000);
-    const endUTC   = new Date(istEnd.getTime()   - 5.5 * 60 * 60 * 1000);
+    const endUTC = new Date();
+    endUTC.setUTCHours(23, 59, 59, 999);
 
     console.log("🕒 UTC RANGE:", startUTC, "→", endUTC);
 
     /* ---------------------------------------------------
-       STEP 2: FETCH TODAY'S TICKETS (UTC SAFE)
+       STEP 2: FETCH TODAY'S TICKETS
     --------------------------------------------------- */
     const todaysTickets = await tickets.findAll({
       where: {
         loginId,
         createdAt: {
           [Op.gte]: startUTC,
-          [Op.lt]: endUTC,
+          [Op.lte]: endUTC,
         },
       },
       order: [["createdAt", "ASC"]],
@@ -125,24 +110,30 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
 
     console.log("🎟️ Tickets found:", todaysTickets.length);
 
-    if (!todaysTickets.length) return res.json([]);
+    if (!todaysTickets.length) {
+      return res.json([]);
+    }
 
     /* ---------------------------------------------------
-       STEP 3: SAFE PARSERS (NO SILENT FAILURES)
+       STEP 3: SAFE PARSERS
     --------------------------------------------------- */
     const parseDrawTime = (dt) => {
       if (!dt) return [];
 
       try {
         if (Array.isArray(dt)) return dt;
-        if (typeof dt === "string" && dt.trim().startsWith("[")) {
-          return JSON.parse(dt);
+
+        if (typeof dt === "string") {
+          if (dt.trim().startsWith("[")) {
+            return JSON.parse(dt);
+          }
+          return [dt];
         }
-        return [dt];
       } catch (err) {
         console.error("❌ drawTime parse error:", dt);
-        return [];
       }
+
+      return [];
     };
 
     const parseTicketNumber = (tn) => {
@@ -172,27 +163,36 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
     };
 
     /* ---------------------------------------------------
-       STEP 4: DRAW SLOT (FORCED IST)
+       STEP 4: CURRENT DRAW SLOT (IST — SAFE)
+       DO NOT do manual +5.5 math
     --------------------------------------------------- */
+    const nowIST = new Date(
+      new Date().toLocaleString("en-US", {
+        timeZone: "Asia/Kolkata",
+      })
+    );
+
     const normalizeTime = (t) => t.replace(/^0/, "").trim();
 
-    const nowIST = new Date(nowUTC.getTime() + 5.5 * 60 * 60 * 1000);
-    const targetSlot = getNextDrawSlot(nowIST).trim();
-    const altSlot = normalizeTime(targetSlot);
+    const targetSlot = normalizeTime(
+      getNextDrawSlot(nowIST).trim()
+    );
 
-    console.log("🎯 TARGET SLOT:", targetSlot);
+    console.log("🎯 TARGET SLOT (IST):", targetSlot);
 
     /* ---------------------------------------------------
        STEP 5: FILTER BY DRAW TIME
     --------------------------------------------------- */
     const filteredTickets = todaysTickets.filter((t) => {
-      const dts = parseDrawTime(t.drawTime).map(normalizeTime);
-      return dts.includes(targetSlot) || dts.includes(altSlot);
+      const drawTimes = parseDrawTime(t.drawTime).map(normalizeTime);
+      return drawTimes.includes(targetSlot);
     });
 
     console.log("✅ Matching tickets:", filteredTickets.length);
 
-    if (!filteredTickets.length) return res.json([]);
+    if (!filteredTickets.length) {
+      return res.json([]);
+    }
 
     /* ---------------------------------------------------
        STEP 6: FINAL RESPONSE (FRONTEND SAFE)
@@ -216,7 +216,6 @@ export const getTicketsByDrawTimeForToday = async (req, res) => {
     ];
 
     return res.json(finalResponse);
-
   } catch (err) {
     console.error("🔥 Controller Error:", err);
     return res.status(500).json({ message: "Internal Server Error" });

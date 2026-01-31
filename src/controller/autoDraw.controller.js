@@ -1,42 +1,51 @@
+import moment from "moment-timezone";
 import { manualGenerateWinningNumbers } from "./testAutoDraw.Controller.js";
 import { winningNumbers } from "../models/winningNumbers.model.js";
-import { Op } from "sequelize";
 
 export const autoGenerateWinningNumbers = async (drawTime) => {
+  const START_TIME = Date.now();
+  const MAX_EXECUTION_MS = 20 * 1000; // 20 seconds hard limit
+
   try {
     if (!drawTime) {
-      console.log("⛔ Auto: drawTime missing");
-      return false;
+      return { success: false, reason: "drawTime missing" };
     }
 
+    // ✅ Normalize drawTime
     const normalizedDrawTime = String(drawTime).trim().toUpperCase();
-    const drawDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
 
-    console.log("⏳ AUTO DRAW Triggered:", normalizedDrawTime, "on", drawDate);
+    // ✅ IST-safe date
+    const drawDate = moment()
+      .tz("Asia/Kolkata")
+      .format("YYYY-MM-DD");
 
-    // Use Op.like to match JSON/array stored DrawTime (e.g. '["09:45 PM"]')
+    /* ---------------------------------------------------
+       STEP 1: FAST, INDEXED DUPLICATE CHECK
+    --------------------------------------------------- */
     const exists = await winningNumbers.findOne({
       where: {
         drawDate,
-        DrawTime: { [Op.like]: `%${normalizedDrawTime}%` },
+        drawTime: normalizedDrawTime, // ❌ NO LIKE
       },
+      attributes: ["id"],
     });
 
     if (exists) {
-      console.log("⚠ AUTO: Result already declared for", normalizedDrawTime);
-      return false;
+      return { success: false, reason: "Already generated" };
     }
 
-    // Call the manual generator directly (see Step 2)
+    if (Date.now() - START_TIME > MAX_EXECUTION_MS) {
+      throw new Error("Auto draw execution timeout");
+    }
+
     const result = await manualGenerateWinningNumbers({
       drawTime: normalizedDrawTime,
       drawDate,
     });
 
-    console.log(`🎉 AUTO SUCCESS for DrawTime ${normalizedDrawTime}`);
-    return result;
+    return { success: true, result };
   } catch (err) {
-    console.error("❌ AUTO CONTROLLER ERROR:", err);
-    return false;
+    console.error("AUTO DRAW FAILED:", err.message);
+    return { success: false, error: err.message };
   }
 };

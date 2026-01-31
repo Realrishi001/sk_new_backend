@@ -11,26 +11,44 @@ export const getActive3DTickets = async (req, res) => {
     }
 
     /* ---------------------------------------------------
-       STEP 1: IST NOW → LAST 15 MINUTES → UTC
+       STEP 1: GET CURRENT IST TIME (SAFE)
     --------------------------------------------------- */
-    const nowUTC = new Date();
-
-    // Convert to IST
-    const nowIST = new Date(nowUTC.getTime() + 5.5 * 60 * 60 * 1000);
-
-    // IST time 15 minutes ago
-    const fifteenMinAgoIST = new Date(nowIST.getTime() - 15 * 60 * 1000);
-
-    // Convert back to UTC for DB query
-    const startUTC = new Date(fifteenMinAgoIST.getTime() - 5.5 * 60 * 60 * 1000);
-    const endUTC   = nowUTC;
-
-    console.log("🕒 3D UTC RANGE:", startUTC, "→", endUTC);
+    const nowIST = new Date(
+      new Date().toLocaleString("en-US", {
+        timeZone: "Asia/Kolkata",
+      })
+    );
 
     /* ---------------------------------------------------
-       STEP 2: FETCH ACTIVE 3D TICKETS (UTC SAFE)
+       STEP 2: IST DAY START & END
     --------------------------------------------------- */
-    const tickets = await threed.findAll({
+    const istStart = new Date(
+      nowIST.getFullYear(),
+      nowIST.getMonth(),
+      nowIST.getDate(),
+      0, 0, 0, 0
+    );
+
+    const istEnd = new Date(
+      nowIST.getFullYear(),
+      nowIST.getMonth(),
+      nowIST.getDate(),
+      23, 59, 59, 999
+    );
+
+    /* ---------------------------------------------------
+       STEP 3: CONVERT IST → UTC (FOR DB QUERY)
+    --------------------------------------------------- */
+    const startUTC = new Date(istStart.getTime() - 5.5 * 60 * 60 * 1000);
+    const endUTC   = new Date(istEnd.getTime()   - 5.5 * 60 * 60 * 1000);
+
+    console.log("🕒 3D UTC DAY RANGE:", startUTC, "→", endUTC);
+    console.log("🕒 IST TODAY:", istStart.toDateString());
+
+    /* ---------------------------------------------------
+       STEP 4: FETCH TODAY'S 3D TICKETS
+    --------------------------------------------------- */
+    const activeTickets = await threed.findAll({
       where: {
         loginId,
         createdAt: {
@@ -41,14 +59,15 @@ export const getActive3DTickets = async (req, res) => {
       order: [["id", "DESC"]],
     });
 
-    console.log("🎟️ Active 3D tickets:", tickets.length);
+    console.log("🎟️ Today 3D tickets:", activeTickets.length);
 
     /* ---------------------------------------------------
-       STEP 3: RESPONSE (FRONTEND SAFE)
+       STEP 5: RESPONSE
     --------------------------------------------------- */
     return res.json([
       {
-        tickets,
+        date: nowIST.toISOString().split("T")[0],
+        tickets: activeTickets,
       },
     ]);
   } catch (err) {
@@ -143,14 +162,62 @@ export const getCancelled3DTickets = async (req, res) => {
       });
     }
 
+    /* ---------------------------------------------------
+       STEP 1: CURRENT IST TIME (SAFE)
+    --------------------------------------------------- */
+    const nowIST = new Date(
+      new Date().toLocaleString("en-US", {
+        timeZone: "Asia/Kolkata",
+      })
+    );
+
+    /* ---------------------------------------------------
+       STEP 2: IST DAY START & END
+    --------------------------------------------------- */
+    const istStart = new Date(
+      nowIST.getFullYear(),
+      nowIST.getMonth(),
+      nowIST.getDate(),
+      0, 0, 0, 0
+    );
+
+    const istEnd = new Date(
+      nowIST.getFullYear(),
+      nowIST.getMonth(),
+      nowIST.getDate(),
+      23, 59, 59, 999
+    );
+
+    /* ---------------------------------------------------
+       STEP 3: CONVERT IST → UTC (DB SAFE)
+    --------------------------------------------------- */
+    const startUTC = new Date(istStart.getTime() - 5.5 * 60 * 60 * 1000);
+    const endUTC   = new Date(istEnd.getTime()   - 5.5 * 60 * 60 * 1000);
+
+    console.log("🕒 3D CANCELLED UTC RANGE:", startUTC, "→", endUTC);
+
+    /* ---------------------------------------------------
+       STEP 4: FETCH TODAY'S CANCELLED 3D TICKETS
+    --------------------------------------------------- */
     const cancelledTickets = await ThreeDCancelledTicket.findAll({
-      where: { loginId },
+      where: {
+        loginId,
+        cancelledAt: {
+          [Op.gte]: startUTC,
+          [Op.lte]: endUTC,
+        },
+      },
       order: [["cancelledAt", "DESC"]],
     });
 
-    // 🔹 Match frontend expectation: [{ tickets: [...] }]
+    console.log("❌ Cancelled 3D tickets today:", cancelledTickets.length);
+
+    /* ---------------------------------------------------
+       STEP 5: RESPONSE (FRONTEND SAFE)
+    --------------------------------------------------- */
     return res.status(200).json([
       {
+        date: nowIST.toISOString().split("T")[0],
         tickets: cancelledTickets,
       },
     ]);
